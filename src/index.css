@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #10b981;
+  --color-primary-dark: #059669;
+  --color-background: #0f172a;
+  --color-surface: #1e293b;
+  --color-surface-hover: #334155;
+  --color-text-main: #f8fafc;
+  --color-text-muted: #94a3b8;
+}
+
+@layer base {
+  :root {
+    font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
+    color-scheme: dark;
+    background-color: var(--color-background);
+    color: var(--color-text-main);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-text-main);
+    min-height: 100vh;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Hide scrollbars globally while keeping scroll functionality */
+  * {
+    scrollbar-width: none;
+    /* Firefox */
+    -ms-overflow-style: none;
+    /* IE/Edge */
+  }
+
+  *::-webkit-scrollbar {
+    display: none;
+    /* Chrome, Safari, Opera */
+  }
+
+  /* Ensure smooth scrolling on snap containers */
+  .overflow-y-scroll {
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+    /* Smooth momentum scrolling on iOS */
+  }
+}
