@@ -1,22 +1,26 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, User, Bot, PlayCircle } from 'lucide-react';
-import { submitInterviewAnswer, getMockQuestions } from '../services/api';
+import { startInterviewSession, submitInterviewAnswers, evaluateInterviewSession } from '../services/api';
 import { useAppContext } from '../contexts/AppContext';
+import { useAuth } from '../contexts/AuthContext';
 import FeedbackCard from '../components/FeedbackCard';
 
 const INTERVIEW_TYPES = ['HR', 'Technical', 'MBA Case Interview'];
 
 export default function MockInterview() {
+    const { user } = useAuth();
     const { interviewHistory, addInterviewFeedback, clearInterview } = useAppContext();
     const [interviewType, setInterviewType] = useState<string>('');
-    const [questions, setQuestions] = useState<string[]>([]);
+    const [questions, setQuestions] = useState<any[]>([]); // {id, text}
+    const [sessionId, setSessionId] = useState<string>('');
     const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
     const [isStarted, setIsStarted] = useState(false);
     const [answerInput, setAnswerInput] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isFinished, setIsFinished] = useState(false);
     const chatEndRef = useRef<HTMLDivElement>(null);
+    const [answers, setAnswers] = useState<any[]>([]);
 
     useEffect(() => {
         if (chatEndRef.current) {
@@ -24,13 +28,24 @@ export default function MockInterview() {
         }
     }, [answerInput, interviewHistory]);
 
-    const handleStart = () => {
+    const handleStart = async () => {
         if (!interviewType) return;
-        clearInterview();
-        setQuestions(getMockQuestions(interviewType));
-        setCurrentQuestionIndex(0);
-        setIsStarted(true);
-        setIsFinished(false);
+        setIsSubmitting(true);
+        try {
+            const userId = user?.id || '';
+            const res = await startInterviewSession(userId, interviewType);
+            clearInterview();
+            setSessionId(res.session_id);
+            setQuestions(res.questions);
+            setAnswers([]);
+            setCurrentQuestionIndex(0);
+            setIsStarted(true);
+            setIsFinished(false);
+        } catch (error) {
+            console.error('Failed to start session', error);
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -38,21 +53,57 @@ export default function MockInterview() {
         if (!answerInput.trim() || isSubmitting) return;
 
         setIsSubmitting(true);
-        const question = questions[currentQuestionIndex];
+        const questionObj = questions[currentQuestionIndex];
+
+        // Save the answer to state for now, we render it optimisticly
+        const newAnswer = {
+            question_id: questionObj.id,
+            answer_text: answerInput
+        };
+        const updatedAnswers = [...answers, newAnswer];
+        setAnswers(updatedAnswers);
+
+        // Optimistic UI updates
+        addInterviewFeedback({
+            question: questionObj.text,
+            answer: answerInput,
+            confidence: 0, clarity: 0, accuracy: 0, suggestion: "Evaluating..."
+        });
+
+        setAnswerInput('');
 
         try {
-            const feedback = await submitInterviewAnswer(question, answerInput);
-            addInterviewFeedback(feedback);
-            setAnswerInput('');
-
             if (currentQuestionIndex < questions.length - 1) {
+                // Just move to next question visually
                 setCurrentQuestionIndex(prev => prev + 1);
+                setIsSubmitting(false);
             } else {
+                // Submit all answers to backend and wait for evaluation
+                const userId = user?.id || '';
+                await submitInterviewAnswers(sessionId, userId, updatedAnswers);
+
+                // Get the real evaluation and replace our optimistic state
+                const evalSummary = await evaluateInterviewSession(sessionId, userId);
+
+                clearInterview();
+                if (evalSummary?.dashboard_data?.individual_evaluations) {
+                    evalSummary.dashboard_data.individual_evaluations.forEach((ev: any, idx: number) => {
+                        addInterviewFeedback({
+                            question: questions[idx].text,
+                            answer: updatedAnswers[idx].answer_text,
+                            confidence: ev.scores.confidence * 10,
+                            clarity: ev.scores.tone * 10, // mapping arbitrarily based on the ROUTING_SHEET
+                            accuracy: ev.scores.accuracy * 10,
+                            suggestion: ev.feedback
+                        });
+                    });
+                }
+
                 setIsFinished(true);
+                setIsSubmitting(false);
             }
         } catch (error) {
             console.error('Failed to submit answer:', error);
-        } finally {
             setIsSubmitting(false);
         }
     };
@@ -234,7 +285,7 @@ export default function MockInterview() {
                             <Bot className="h-5 w-5 text-white" />
                         </div>
                         <div className="bg-slate-800 rounded-2xl p-5 border border-slate-700 max-w-[80%]">
-                            <p className="text-slate-200">{questions[currentQuestionIndex]}</p>
+                            <p className="text-slate-200">{questions[currentQuestionIndex]?.text}</p>
                         </div>
                     </motion.div>
                 </AnimatePresence>

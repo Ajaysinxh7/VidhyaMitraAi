@@ -2,13 +2,11 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Brain, Mail, User, ArrowRight, Loader2 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
-import { apiClient } from '../services/api';
 import PasswordInput from '../components/PasswordInput';
-import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../services/supabaseClient';
 
 export default function Signup() {
     const navigate = useNavigate();
-    const { login } = useAuth();
 
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
@@ -54,39 +52,22 @@ export default function Signup() {
 
         setIsLoading(true);
         try {
-            // Temporary mock logic if backend is not running yet
-            const res = await apiClient.post('/auth/signup', {
-                name,
+            const { error } = await supabase.auth.signUp({
                 email,
-                password
-            }).catch(err => {
-                if (err.message === 'Network Error' || err.code === 'ERR_NETWORK') {
-                    // Simulate successful signup and auto-login
-                    return {
-                        data: {
-                            access_token: 'mock_access_token_signup',
-                            refresh_token: 'mock_refresh_token_signup',
-                            user: { id: 2, email, name, role: 'User' }
-                        }
-                    };
+                password,
+                options: {
+                    data: {
+                        name: name
+                    }
                 }
-                throw err;
             });
 
-            const { access_token, refresh_token, user } = res.data;
+            if (error) throw error;
 
             toast.success('Account created successfully!');
-
-            // Auto login after signup
-            if (access_token) {
-                login(access_token, refresh_token, user);
-                navigate('/dashboard', { replace: true });
-            } else {
-                navigate('/login');
-            }
-
+            navigate('/dashboard', { replace: true });
         } catch (error: any) {
-            toast.error(error.response?.data?.detail || 'Failed to create account');
+            toast.error(error.message || 'Failed to create account');
         } finally {
             setIsLoading(false);
         }

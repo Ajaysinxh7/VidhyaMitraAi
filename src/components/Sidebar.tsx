@@ -48,9 +48,9 @@ export default function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsO
                                 key={link.name}
                                 to={link.path}
                                 onClick={() => setIsOpen(false)}
-                                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 group ${isActive(link.path)
-                                        ? 'bg-blue-600/10 text-blue-400 border border-blue-500/20 shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)]'
-                                        : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
+                                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 group focus:outline-none focus:ring-0 ${isActive(link.path)
+                                    ? 'bg-blue-600/10 text-blue-400 border border-blue-500/20 shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)]'
+                                    : 'text-slate-400 border border-transparent hover:bg-slate-800/50 hover:text-slate-200'
                                     }`}
                             >
                                 <Icon className={`h-5 w-5 ${isActive(link.path) ? 'text-blue-500' : 'text-slate-500 group-hover:text-slate-400'}`} />

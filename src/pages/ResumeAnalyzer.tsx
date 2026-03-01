@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { analyzeResume } from '../services/api';
 import { useAppContext } from '../contexts/AppContext';
+import { useAuth } from '../contexts/AuthContext';
 import RoleChip from '../components/RoleChip';
 import UploadBox from '../components/UploadBox';
 import ScoreCircle from '../components/ScoreCircle';
@@ -20,6 +21,7 @@ const ROLES = [
 ];
 
 export default function ResumeAnalyzer() {
+    const { user } = useAuth();
     const { resumeResult, setResumeResult } = useAppContext();
     const [targetRole, setTargetRole] = useState<string>('');
     const [file, setFile] = useState<File | null>(null);
@@ -45,10 +47,14 @@ export default function ResumeAnalyzer() {
         setError('');
 
         try {
-            const result = await analyzeResume(file, targetRole);
-            setResumeResult(result);
-        } catch (err) {
-            setError('Failed to analyze resume. Please try again.');
+            const userId = user?.id || '';
+            const result = await analyzeResume(file, targetRole, userId);
+
+            // Map FastAPI backend response into frontend shape if nested
+            // Example mapping assuming backend gives `status` and `data.analysis_result`
+            setResumeResult(result?.data?.analysis_result || result);
+        } catch (err: any) {
+            setError(err?.response?.data?.detail || err.message || 'Failed to analyze resume. Please try again.');
         } finally {
             setIsLoading(false);
         }
@@ -107,8 +113,8 @@ export default function ResumeAnalyzer() {
                             onClick={handleAnalyze}
                             disabled={isLoading || !file || !targetRole}
                             className={`mt-8 w-full py-4 rounded-xl font-semibold text-lg transition-all flex items-center justify-center gap-2 ${isLoading || !file || !targetRole
-                                    ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
-                                    : 'bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:-translate-y-0.5'
+                                ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                                : 'bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/25 hover:shadow-blue-500/40 hover:-translate-y-0.5'
                                 }`}
                         >
                             {isLoading ? 'Analyzing...' : 'Analyze My Resume'}

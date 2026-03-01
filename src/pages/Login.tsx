@@ -2,14 +2,12 @@ import { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Brain, Mail, ArrowRight, Loader2 } from 'lucide-react';
 import toast, { Toaster } from 'react-hot-toast';
-import { useAuth } from '../contexts/AuthContext';
-import { apiClient } from '../services/api';
 import PasswordInput from '../components/PasswordInput';
+import { supabase } from '../services/supabaseClient';
 
 export default function Login() {
     const navigate = useNavigate();
     const location = useLocation();
-    const { login } = useAuth();
 
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -28,33 +26,17 @@ export default function Login() {
 
         setIsLoading(true);
         try {
-            // Temporary mock logic if backend is not running yet
-            // In production, this goes to apiClient.post('/auth/login')
-            const res = await apiClient.post('/auth/login', {
+            const { error } = await supabase.auth.signInWithPassword({
                 email,
-                password
-            }).catch(err => {
-                // Fallback mock logic for UI dev before FastAPI is up
-                if (err.message === 'Network Error' || err.code === 'ERR_NETWORK') {
-                    return {
-                        data: {
-                            access_token: 'mock_access_token',
-                            refresh_token: 'mock_refresh_token',
-                            user: { id: 1, email, name: 'Demo User', role: 'Software Engineer' }
-                        }
-                    };
-                }
-                throw err;
+                password,
             });
 
-            const { access_token, refresh_token, user } = res.data;
+            if (error) throw error;
 
-            login(access_token, refresh_token, user);
             toast.success('Successfully logged in!');
-
             navigate(from, { replace: true });
         } catch (error: any) {
-            toast.error(error.response?.data?.detail || 'Invalid email or password');
+            toast.error(error.message || 'Invalid email or password');
         } finally {
             setIsLoading(false);
         }

@@ -6,7 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 export default function Navbar() {
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const location = useLocation();
-    const { isAuthenticated, logout } = useAuth();
+    const { isAuthenticated, signOut } = useAuth();
 
     const navLinks = [
         { name: 'Home', path: '/' },
@@ -54,7 +54,7 @@ export default function Navbar() {
                                         <span>Dashboard</span>
                                     </Link>
                                     <button
-                                        onClick={logout}
+                                        onClick={signOut}
                                         className="text-sm font-medium text-slate-400 hover:text-red-400 transition-colors"
                                     >
                                         Log Out
@@ -107,7 +107,7 @@ export default function Navbar() {
                                     Dashboard
                                 </Link>
                                 <button
-                                    onClick={() => { logout(); setIsMenuOpen(false); }}
+                                    onClick={() => { signOut(); setIsMenuOpen(false); }}
                                     className="w-full text-left mt-2 px-3 py-2 rounded-md text-base font-medium text-red-400 hover:bg-slate-800"
                                 >
                                     Log Out
