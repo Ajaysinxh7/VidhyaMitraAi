@@ -1,73 +1,32 @@
-# React + TypeScript + Vite
+# VidyaMitra 🚀
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+VidyaMitra is an advanced, AI-powered career assistant platform featuring a modern React frontend and a robust FastAPI backend. It provides users with a comprehensive suite of AI agents to help them build, analyze, and evaluate their resumes, plan their career paths, take practice quizzes, prepare for interviews, and track their progress.
 
-Currently, two official plugins are available:
+## 🌟 Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+Our platform integrates 8 distinct AI-driven functionalities:
 
-## React Compiler
+- **Resume Building:** Generate professional resumes tailored to your industry.
+- **Resume Analyzing:** Get AI feedback on your existing resume's strengths and weaknesses.
+- **Evaluating:** Evaluate your skills and readiness for specific roles.
+- **Eligibility Criteria:** Check your qualifications against job requirements.
+- **Planning:** Create actionable career and learning plans.
+- **Quiz:** Test your knowledge with dynamically generated quizzes.
+- **Interview:** Practice with realistic, AI-conducted mock interviews.
+- **Progress Tracking:** Monitor your learning and application journey.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## 🛠️ Technology Stack
 
-## Expanding the ESLint configuration
+- **Frontend:** React 19, Vite, TypeScript, Tailwind CSS 4, Framer Motion, Recharts
+- **Backend:** Python, FastAPI, Uvicorn, Pydantic
+- **AI/LLM Integration:** OpenAI, Groq
+- **Database & Auth:** Supabase
+- **Document Processing:** PyMuPDF, python-docx, NLTK
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## 🚀 Getting Started
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+To get a local copy up and running, please refer to our detailed setup guide in [SETUP.md](SETUP.md).
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+## 🔒 Security Note
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
-
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+This project uses various API keys for AI models and database services. Please ensure you keep your `.env` files secure and never commit them to public repositories. All sensitive data has been omitted from the configuration templates.
