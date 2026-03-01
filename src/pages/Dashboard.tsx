@@ -79,7 +79,7 @@ export default function Dashboard() {
             {/* Header Area */}
             <div className="mb-8">
                 <h1 className="text-3xl md:text-4xl font-bold mb-2">
-                    Welcome back, <span className="bg-gradient-to-r from-blue-400 to-indigo-500 bg-clip-text text-transparent">{user?.name ? user.name.split(' ')[0] : 'User'}</span> 👋
+                    Welcome back, <span className="bg-gradient-to-r from-blue-400 to-indigo-500 bg-clip-text text-transparent">{user?.user_metadata?.name ? user.user_metadata.name.split(' ')[0] : 'User'}</span> 👋
                 </h1>
                 <p className="text-slate-400 text-lg">
                     Access all your AI-powered career tools below. What would you like to do today?
