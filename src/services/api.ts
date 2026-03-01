@@ -55,3 +55,107 @@ export const evaluateInterviewSession = async (sessionId: string, userId: string
     });
     return data;
 };
+
+// --- Quiz API ---
+
+export interface QuizQuestion {
+    id: string;
+    question_text: string;
+    options: string[];
+}
+
+export interface QuizAnswerItem {
+    question_id: string;
+    selected_option: string;
+}
+
+export interface DetailedResult {
+    question_id: string;
+    question_text: string;
+    user_answer: string;
+    correct_answer: string;
+    is_correct: boolean;
+    explanation: string;
+}
+
+export interface GenerateQuizResponse {
+    status: string;
+    quiz_id: string;
+    topic: string;
+    questions: QuizQuestion[];
+}
+
+export interface SubmitQuizResponse {
+    status: string;
+    score: string;
+    score_percentage: number;
+    detailed_results: DetailedResult[];
+}
+
+/** Generates an AI quiz for a given topic via POST /quiz/generate */
+export const generateQuiz = async (
+    userId: string,
+    topic: string,
+    difficulty: string,
+    numQuestions: number
+): Promise<GenerateQuizResponse> => {
+    const { data } = await apiClient.post('/quiz/generate', {
+        user_id: userId,
+        topic,
+        difficulty,
+        num_questions: numQuestions,
+    });
+    return data;
+};
+
+/** Submits quiz answers for grading via POST /quiz/submit */
+export const submitQuiz = async (
+    quizId: string,
+    userId: string,
+    answers: QuizAnswerItem[]
+): Promise<SubmitQuizResponse> => {
+    const { data } = await apiClient.post('/quiz/submit', {
+        quiz_id: quizId,
+        user_id: userId,
+        answers,
+    });
+    return data;
+};
+
+// --- Roadmap API ---
+
+export interface RoadmapMilestone {
+    id: string;
+    title: string;
+    description: string;
+    duration: string;
+    status: 'completed' | 'current' | 'upcoming';
+}
+
+export interface VideoRecommendation {
+    title: string;
+    video_id: string;
+    url: string;
+}
+
+export interface GenerateRoadmapResponse {
+    roadmap_id: string;
+    goal: string;
+    milestones: RoadmapMilestone[];
+    recommended_videos: VideoRecommendation[];
+    dashboard_image_url: string | null;
+}
+
+/** Generates an AI career roadmap via POST /roadmap/generate */
+export const generateRoadmap = async (
+    userId: string,
+    goal: string,
+    timelineMonths: number = 6
+): Promise<GenerateRoadmapResponse> => {
+    const { data } = await apiClient.post('/roadmap/generate', {
+        user_id: userId,
+        goal,
+        timeline_months: timelineMonths,
+    });
+    return data;
+};
