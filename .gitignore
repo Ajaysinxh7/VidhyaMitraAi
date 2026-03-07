@@ -43,3 +43,6 @@ _roadmap_store.json
 
 # Temporary testing scripts
 ping_supabase*.py
+check_quiz*.py
+*_output.txt
+traceback.txt

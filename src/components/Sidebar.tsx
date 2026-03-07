@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence, type Variants } from 'framer-motion';
 import {
     LayoutDashboard,
     FileText,
@@ -60,7 +60,7 @@ const navGroups: NavGroup[] = [
     },
 ];
 
-const sidebarVariants = {
+const sidebarVariants: Variants = {
     hidden: { x: -280, opacity: 0 },
     visible: {
         x: 0,
@@ -74,7 +74,7 @@ const sidebarVariants = {
     },
 };
 
-const groupVariants = {
+const groupVariants: Variants = {
     hidden: { opacity: 0, y: 8 },
     visible: (i: number) => ({
         opacity: 1,
@@ -83,11 +83,16 @@ const groupVariants = {
     }),
 };
 
-export default function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean; setIsOpen: (val: boolean) => void }) {
-    const location = useLocation();
-    const isActive = (path: string) => location.pathname === path;
+interface SidebarContentProps {
+    setIsOpen: (val: boolean) => void;
+    currentPath: string;
+    isMobile?: boolean;
+}
 
-    const SidebarContent = () => (
+const SidebarContent = ({ setIsOpen, currentPath, isMobile }: SidebarContentProps) => {
+    const isActive = (path: string) => currentPath === path;
+
+    return (
         <div className="h-full flex flex-col relative overflow-hidden">
             {/* Background glow blobs */}
             <div className="absolute top-0 left-0 w-40 h-40 bg-indigo-500/5 rounded-full blur-3xl pointer-events-none" />
@@ -147,7 +152,7 @@ export default function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean; setIsO
                                         {/* Active state background with glow */}
                                         {active && (
                                             <motion.div
-                                                layoutId="sidebar-active"
+                                                layoutId={`sidebar-active-${isMobile ? 'mobile' : 'desktop'}`}
                                                 className="absolute inset-0 rounded-xl bg-gradient-to-r from-indigo-500/[0.12] to-cyan-500/[0.06] border border-indigo-500/20"
                                                 style={{
                                                     boxShadow: '0 0 20px rgba(99, 102, 241, 0.08), inset 0 1px 0 rgba(255,255,255,0.04)',
@@ -193,12 +198,16 @@ export default function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean; setIsO
             </div>
         </div>
     );
+};
+
+export default function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean; setIsOpen: (val: boolean) => void }) {
+    const location = useLocation();
 
     return (
         <>
             {/* Desktop Sidebar - always visible */}
             <aside className="hidden md:block w-[260px] min-w-[260px] bg-[#060b18]/80 backdrop-blur-xl border-r border-white/[0.04] relative">
-                <SidebarContent />
+                <SidebarContent setIsOpen={setIsOpen} currentPath={location.pathname} isMobile={false} />
             </aside>
 
             {/* Mobile Sidebar - animated overlay */}
@@ -220,7 +229,7 @@ export default function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean; setIsO
                             exit="exit"
                             className="fixed inset-y-0 left-0 z-50 w-[260px] bg-[#060b18]/95 backdrop-blur-xl border-r border-white/[0.04] md:hidden"
                         >
-                            <SidebarContent />
+                            <SidebarContent setIsOpen={setIsOpen} currentPath={location.pathname} isMobile={true} />
                         </motion.aside>
                     </>
                 )}

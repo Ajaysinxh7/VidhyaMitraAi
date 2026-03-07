@@ -117,7 +117,7 @@ export default function Quiz() {
         setError(null);
 
         try {
-            const response = await submitQuizAPI(quizIdRef.current!, userId, finalAnswers);
+            const response = await submitQuizAPI(userId, quizIdRef.current!, finalAnswers);
             setResults(response);
         } catch (err: any) {
             const message =
@@ -277,8 +277,8 @@ export default function Quiz() {
                                         key={n}
                                         onClick={() => setNumQuestions(n)}
                                         className={`py-2.5 rounded-xl font-semibold text-sm border-2 transition-all ${numQuestions === n
-                                                ? 'border-cyan-500 bg-cyan-500/10 text-cyan-300'
-                                                : 'border-slate-700 bg-slate-900/50 text-slate-400 hover:border-slate-500'
+                                            ? 'border-cyan-500 bg-cyan-500/10 text-cyan-300'
+                                            : 'border-slate-700 bg-slate-900/50 text-slate-400 hover:border-slate-500'
                                             }`}
                                     >
                                         {n} Qs
@@ -393,8 +393,8 @@ export default function Quiz() {
                 </div>
 
                 <div className={`px-4 py-2 rounded-full border flex items-center gap-2 text-sm font-medium font-mono tracking-wider ${timeLeft <= 10
-                        ? 'bg-red-500/10 border-red-500/30 text-red-400 animate-pulse'
-                        : 'bg-slate-800/80 border-slate-700 text-slate-300'
+                    ? 'bg-red-500/10 border-red-500/30 text-red-400 animate-pulse'
+                    : 'bg-slate-800/80 border-slate-700 text-slate-300'
                     }`}>
                     <Clock className="h-4 w-4" />
                     {timeMins}:{timeSecs.toString().padStart(2, '0')}
@@ -431,8 +431,8 @@ export default function Quiz() {
                             key={idx}
                             onClick={() => handleOptionSelect(option)}
                             className={`w-full text-left p-4 rounded-xl border-2 transition-all ${selectedOption === option
-                                    ? 'border-cyan-500 bg-cyan-500/10 text-white shadow-sm'
-                                    : 'border-slate-700 bg-slate-900/50 text-slate-300 hover:border-slate-500 hover:bg-slate-800'
+                                ? 'border-cyan-500 bg-cyan-500/10 text-white shadow-sm'
+                                : 'border-slate-700 bg-slate-900/50 text-slate-300 hover:border-slate-500 hover:bg-slate-800'
                                 }`}
                         >
                             <div className="flex items-center gap-4">
@@ -453,8 +453,8 @@ export default function Quiz() {
                     onClick={handleNext}
                     disabled={selectedOption === null}
                     className={`px-8 py-4 rounded-xl font-bold flex items-center gap-2 transition-all ${selectedOption === null
-                            ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                            : 'bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg shadow-cyan-600/20 hover:-translate-y-0.5 active:translate-y-0'
+                        ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                        : 'bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg shadow-cyan-600/20 hover:-translate-y-0.5 active:translate-y-0'
                         }`}
                 >
                     {isLastQuestion ? 'Finish Quiz' : 'Next Question'}
@@ -473,8 +473,8 @@ function ResultCard({ result, index }: { result: DetailedResult; index: number }
     return (
         <div
             className={`rounded-2xl border p-5 transition-all ${result.is_correct
-                    ? 'bg-emerald-500/5 border-emerald-500/20'
-                    : 'bg-red-500/5 border-red-500/20'
+                ? 'bg-emerald-500/5 border-emerald-500/20'
+                : 'bg-red-500/5 border-red-500/20'
                 }`}
         >
             {/* Question row */}
@@ -491,8 +491,8 @@ function ResultCard({ result, index }: { result: DetailedResult; index: number }
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
                         <div className={`rounded-lg px-3 py-2 border ${result.is_correct
-                                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
-                                : 'bg-red-500/10 border-red-500/20 text-red-300'
+                            ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+                            : 'bg-red-500/10 border-red-500/20 text-red-300'
                             }`}>
                             <span className="text-xs font-semibold uppercase tracking-wider opacity-70 block mb-0.5">Your Answer</span>
                             {result.user_answer || <span className="italic opacity-50">No answer</span>}
