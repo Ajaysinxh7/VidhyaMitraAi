@@ -30,7 +30,7 @@ export default function DashboardHeader({ onMenuClick }: { onMenuClick: () => vo
     const location = useLocation();
 
     return (
-        <header className="sticky top-0 z-30 bg-[#030712]/60 backdrop-blur-xl border-b border-white/[0.04] h-16">
+        <header className="sticky top-0 z-30 bg-[#030712] border-b border-white/[0.04] h-16 shadow-lg">
             <motion.div
                 key={location.pathname}
                 className="flex items-center justify-between px-4 sm:px-6 lg:px-8 h-full"

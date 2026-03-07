@@ -82,7 +82,7 @@ export default function Navbar() {
     const isActive = (path: string) => location.pathname === path;
 
     return (
-        <nav className="sticky top-0 z-50 bg-slate-900/80 backdrop-blur-md border-b border-slate-800">
+        <nav className="sticky top-0 z-50 bg-slate-900 border-b border-slate-800 shadow-xl">
             <div className="container mx-auto px-4 sm:px-6 lg:px-8">
                 <motion.div
                     key={location.pathname}

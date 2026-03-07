@@ -94,9 +94,8 @@ const SidebarContent = ({ setIsOpen, currentPath, isMobile }: SidebarContentProp
 
     return (
         <div className="h-full flex flex-col relative overflow-hidden">
-            {/* Background glow blobs */}
-            <div className="absolute top-0 left-0 w-40 h-40 bg-indigo-500/5 rounded-full blur-3xl pointer-events-none" />
-            <div className="absolute bottom-20 right-0 w-32 h-32 bg-cyan-500/5 rounded-full blur-3xl pointer-events-none" />
+            {/* Background glow blobs - Removed for performance */}
+            <div className="absolute top-0 left-0 w-40 h-40 bg-indigo-500/5 rounded-full pointer-events-none transform-gpu" />
 
             {/* Brand Header */}
             <div className="p-5 border-b border-white/[0.04]">
@@ -184,7 +183,7 @@ const SidebarContent = ({ setIsOpen, currentPath, isMobile }: SidebarContentProp
             {/* Bottom AI Promo Card */}
             <div className="p-3 mt-auto">
                 <div className="relative overflow-hidden rounded-xl p-4 bg-gradient-to-br from-indigo-500/10 via-purple-500/5 to-cyan-500/10 border border-indigo-500/10">
-                    <div className="absolute top-0 right-0 w-20 h-20 bg-indigo-500/10 rounded-full blur-2xl" />
+                    <div className="absolute top-0 right-0 w-20 h-20 bg-indigo-500/5 rounded-full" />
                     <div className="relative z-10">
                         <div className="flex items-center gap-2 mb-2">
                             <Sparkles className="h-4 w-4 text-indigo-400" />
@@ -206,7 +205,7 @@ export default function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean; setIsO
     return (
         <>
             {/* Desktop Sidebar - always visible */}
-            <aside className="hidden md:block w-[260px] min-w-[260px] bg-[#060b18]/80 backdrop-blur-xl border-r border-white/[0.04] relative">
+            <aside className="hidden md:block w-[260px] min-w-[260px] bg-[#060b18] shadow-xl border-r border-white/[0.04] relative">
                 <SidebarContent setIsOpen={setIsOpen} currentPath={location.pathname} isMobile={false} />
             </aside>
 
@@ -227,7 +226,7 @@ export default function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean; setIsO
                             initial="hidden"
                             animate="visible"
                             exit="exit"
-                            className="fixed inset-y-0 left-0 z-50 w-[260px] bg-[#060b18]/95 backdrop-blur-xl border-r border-white/[0.04] md:hidden"
+                            className="fixed inset-y-0 left-0 z-50 w-[260px] bg-[#060b18] border-r border-white/[0.04] shadow-2xl md:hidden transform-gpu"
                         >
                             <SidebarContent setIsOpen={setIsOpen} currentPath={location.pathname} isMobile={true} />
                         </motion.aside>

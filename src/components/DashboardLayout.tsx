@@ -26,11 +26,11 @@ export default function DashboardLayout() {
     return (
         <div className="flex h-screen bg-[#030712] overflow-hidden font-sans text-slate-50 relative selection:bg-indigo-500/30">
             {/* Global Ambient Background */}
-            <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none noise-overlay">
+            <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
                 {/* Purple/Indigo Top Right Glow */}
-                <div className="absolute top-[-10%] right-[-5%] w-[40vw] h-[40vw] rounded-full bg-indigo-600/10 blur-[100px] float" />
+                <div className="absolute top-[-10%] right-[-5%] w-[40vw] h-[40vw] rounded-full bg-indigo-600/10 blur-[60px] lg:blur-[80px] transform-gpu" />
                 {/* Cyan Bottom Left Glow */}
-                <div className="absolute bottom-[-10%] left-[-10%] w-[50vw] h-[50vw] rounded-full bg-cyan-600/10 blur-[120px] float" style={{ animationDelay: '-3s' }} />
+                <div className="absolute bottom-[-10%] left-[-10%] w-[50vw] h-[50vw] rounded-full bg-cyan-600/10 blur-[60px] lg:blur-[80px] transform-gpu" />
             </div>
 
             {/* Sidebar Component */}

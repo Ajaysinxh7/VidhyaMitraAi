@@ -160,13 +160,13 @@ export default function Dashboard() {
             className="w-full relative pb-20"
         >
             {/* AI Assistant Floating Button */}
-            <div className="fixed bottom-6 right-6 z-50 md:bottom-8 md:right-8 float transform-gpu">
+            <div className="fixed bottom-6 right-6 z-50 md:bottom-8 md:right-8 transform-gpu">
                 <motion.button
                     whileHover={{ scale: 1.05 }}
                     whileTap={{ scale: 0.95 }}
                     className="p-4 rounded-full bg-gradient-to-r from-indigo-500 to-cyan-500 text-white shadow-lg shadow-indigo-500/25 group focus:outline-none"
                 >
-                    <div className="absolute inset-0 rounded-full bg-white/20 blur-md opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none will-change-opacity" />
+                    <div className="absolute inset-0 rounded-full bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none will-change-opacity" />
                     <Bot className="h-6 w-6 relative z-10" />
                 </motion.button>
             </div>
@@ -174,9 +174,7 @@ export default function Dashboard() {
             {/* Hero Section */}
             <motion.div variants={itemVariants} className="mb-10 relative">
                 <div className="glass-strong rounded-3xl p-8 relative overflow-hidden border border-white/[0.05]">
-                    {/* Background decorative glows */}
-                    <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-500/10 rounded-full blur-[60px] lg:blur-[80px] -translate-y-1/2 translate-x-1/2 transform-gpu pointer-events-none" style={{ willChange: 'transform' }} />
-                    <div className="absolute bottom-0 left-0 w-[300px] h-[300px] bg-cyan-500/10 rounded-full blur-[40px] lg:blur-[60px] translate-y-1/2 -translate-x-1/4 transform-gpu pointer-events-none" style={{ willChange: 'transform' }} />
+                    {/* Background decorative glows removed for performance */}
 
                     <div className="relative z-10 grid grid-cols-1 lg:grid-cols-3 gap-8 items-center">
                         <div className="lg:col-span-2">
@@ -205,7 +203,7 @@ export default function Dashboard() {
                         </div>
 
                         {/* AI Insights Widget */}
-                        <div className="lg:col-span-1 glass rounded-2xl p-6 border border-white/10 relative hover-glow">
+                        <div className="lg:col-span-1 glass rounded-2xl p-6 border border-white/10 relative">
                             <div className="flex items-center justify-between mb-5">
                                 <h3 className="font-semibold text-slate-200 flex items-center gap-2">
                                     <Brain className="h-4 w-4 text-indigo-400" />
@@ -252,13 +250,13 @@ export default function Dashboard() {
                             >
                                 {/* Shimmer effect on hover */}
                                 <div className="absolute inset-0 rounded-2xl overflow-hidden opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none">
-                                    <div className="w-full h-full shimmer delay-100" />
+                                    <div className="w-full h-full delay-100" />
                                 </div>
 
                                 <div className="mb-5 relative inline-flex">
-                                    <div className={`absolute inset-0 rounded-xl bg-gradient-to-br ${mod.colors.from} ${mod.colors.to} blur-md opacity-20 group-hover:opacity-40 transition-opacity duration-300`} />
+                                    <div className={`absolute inset-0 rounded-xl bg-gradient-to-br ${mod.colors.from} ${mod.colors.to} opacity-10 group-hover:opacity-20 transition-opacity duration-300 transform-gpu`} />
                                     <div className={`relative p-3 rounded-xl bg-gradient-to-br ${mod.colors.from} ${mod.colors.to} shadow-inner`}>
-                                        <Icon className="h-6 w-6 text-white transform group-hover:scale-110 transition-transform duration-300" style={{ animation: 'icon-bounce 2s infinite ease-in-out' }} />
+                                        <Icon className="h-6 w-6 text-white transform group-hover:scale-110 group-hover:-translate-y-1 transition-all duration-300" />
                                     </div>
                                 </div>
 
