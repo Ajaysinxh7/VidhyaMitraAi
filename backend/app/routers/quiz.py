@@ -1,6 +1,7 @@
 import os
 import json
 import uuid
+from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Optional
@@ -10,7 +11,7 @@ from openai import AsyncOpenAI
 load_dotenv()
 
 # ── Supabase (optional) ───────────────────────────────────────────────────────
-# If Supabase is unreachable, quiz data is stored in-memory for the session.
+# If Supabase is unreachable, quiz data is stored in a local file for the session.
 try:
     from supabase import create_client, Client
     _supabase_url = os.getenv("SUPABASE_URL")
@@ -19,8 +20,26 @@ try:
 except Exception:
     supabase = None
 
-# In-memory fallback store  { quiz_id: { ...quiz_data } }
-_quiz_store: Dict[str, dict] = {}
+# File-backed quiz store — survives server restarts with --reload
+_STORE_PATH = Path(__file__).resolve().parent.parent / "_quiz_store.json"
+
+def _load_store() -> Dict[str, dict]:
+    """Load quiz store from disk."""
+    try:
+        if _STORE_PATH.exists():
+            return json.loads(_STORE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+def _save_store(store: Dict[str, dict]) -> None:
+    """Persist quiz store to disk, auto-purging completed quizzes."""
+    try:
+        # Only keep pending (active) quizzes — completed ones are no longer needed
+        active = {k: v for k, v in store.items() if v.get("status") != "completed"}
+        _STORE_PATH.write_text(json.dumps(active, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
 
 # ── OpenAI / Groq client ──────────────────────────────────────────────────────
 openai_client = AsyncOpenAI(
@@ -91,9 +110,10 @@ async def generate_quiz(request: GenerateQuizRequest):
             q["id"] = str(uuid.uuid4())
             formatted_questions.append(q)
 
-        # ── Always save to in-memory store (works with or without Supabase) ──
+        # ── Save to file-backed store (survives server restarts) ──
         quiz_id = str(uuid.uuid4())
-        _quiz_store[quiz_id] = {
+        store = _load_store()
+        store[quiz_id] = {
             "id": quiz_id,
             "user_id": request.user_id,
             "topic": request.topic,
@@ -101,6 +121,7 @@ async def generate_quiz(request: GenerateQuizRequest):
             "questions": formatted_questions,  # includes correct_answer + explanation
             "status": "pending"
         }
+        _save_store(store)
 
         # ── Best-effort Supabase write (skip if unavailable) ──
         if supabase:
@@ -115,11 +136,15 @@ async def generate_quiz(request: GenerateQuizRequest):
                 }).execute()
                 # Use the DB-generated id if available
                 if db_response.data:
-                    quiz_id = db_response.data[0]["id"]
-                    _quiz_store[quiz_id] = _quiz_store.pop(list(_quiz_store.keys())[-1])
-                    _quiz_store[quiz_id]["id"] = quiz_id
+                    db_id = db_response.data[0]["id"]
+                    if db_id != quiz_id:
+                        store = _load_store()
+                        store[db_id] = store.pop(quiz_id)
+                        store[db_id]["id"] = db_id
+                        quiz_id = db_id
+                        _save_store(store)
             except Exception:
-                pass  # Fall back silently to in-memory store
+                pass  # Fall back silently to file store
 
         # Strip correct_answer + explanation before returning to the frontend
         safe_questions = [
@@ -151,8 +176,9 @@ async def submit_quiz(submission: SubmitQuizRequest):
     Returns the score and explanations.
     """
     try:
-        # 1. Look up quiz — in-memory store first, then Supabase
-        quiz_data = _quiz_store.get(submission.quiz_id)
+        # 1. Look up quiz — file store first, then Supabase
+        store = _load_store()
+        quiz_data = store.get(submission.quiz_id)
 
         if quiz_data is None and supabase:
             try:
@@ -200,9 +226,10 @@ async def submit_quiz(submission: SubmitQuizRequest):
 
         final_score_percentage = (score / total_questions) * 100 if total_questions > 0 else 0
 
-        # 3. Mark in-memory store as completed
-        if submission.quiz_id in _quiz_store:
-            _quiz_store[submission.quiz_id]["status"] = "completed"
+        # 3. Mark file store as completed
+        if submission.quiz_id in store:
+            store[submission.quiz_id]["status"] = "completed"
+            _save_store(store)
 
         # 4. Best-effort Supabase update
         if supabase:

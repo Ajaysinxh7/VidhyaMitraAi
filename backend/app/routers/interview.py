@@ -1,6 +1,7 @@
 import os
 import json
 import uuid
+from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Optional
@@ -18,8 +19,24 @@ try:
 except Exception:
     supabase = None
 
-# In-memory store fallback { session_id: { ...data } }
-_interview_sessions_store: Dict[str, dict] = {}
+# File-backed session store — survives server restarts with --reload
+_STORE_PATH = Path(__file__).resolve().parent.parent / "_interview_store.json"
+
+def _load_store() -> Dict[str, dict]:
+    try:
+        if _STORE_PATH.exists():
+            return json.loads(_STORE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+def _save_store(store: Dict[str, dict]) -> None:
+    """Persist store to disk, auto-purging evaluated sessions."""
+    try:
+        active = {k: v for k, v in store.items() if v.get("status") not in ("evaluated", "completed")}
+        _STORE_PATH.write_text(json.dumps(active, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
 openai_client = AsyncOpenAI(
     api_key=os.getenv("GROQ_API_KEY"),
     base_url="https://api.groq.com/openai/v1" # This tricks the OpenAI library into talking to Groq!
@@ -106,9 +123,10 @@ async def start_interview_session(request: StartInterviewRequest):
             {"id": str(uuid.uuid4()), "text": q_text} for q_text in raw_questions
         ]
 
-        # 5. Always save to in-memory store
+        # 5. Save to file-backed store
         session_id = str(uuid.uuid4())
-        _interview_sessions_store[session_id] = {
+        store = _load_store()
+        store[session_id] = {
             "id": session_id,
             "user_id": request.user_id,
             "target_role": request.target_role,
@@ -116,6 +134,7 @@ async def start_interview_session(request: StartInterviewRequest):
             "status": "in_progress",
             "user_answers": []
         }
+        _save_store(store)
 
         # 6. Best-effort write to Supabase
         if supabase:
@@ -129,11 +148,13 @@ async def start_interview_session(request: StartInterviewRequest):
                 }).execute()
                 
                 if db_response.data:
-                    # Update local ref with DB generated ID to be safe
                     db_id = db_response.data[0]["id"]
-                    _interview_sessions_store[db_id] = _interview_sessions_store.pop(session_id)
-                    _interview_sessions_store[db_id]["id"] = db_id
-                    session_id = db_id
+                    if db_id != session_id:
+                        store = _load_store()
+                        store[db_id] = store.pop(session_id, store.get(db_id, {}))
+                        store[db_id]["id"] = db_id
+                        session_id = db_id
+                        _save_store(store)
             except Exception:
                 pass # Fail silently to memory fallback
 
@@ -162,37 +183,35 @@ async def submit_all_answers(submission: SubmitAllAnswersRequest):
             for ans in submission.answers
         ]
 
-        # 2. Update the in-memory store
-        is_in_memory = submission.session_id in _interview_sessions_store
-        if is_in_memory:
-            # We enforce user_id validation if it's in memory
-            if _interview_sessions_store[submission.session_id]["user_id"] != submission.user_id:
+        # 2. Update the file-backed store
+        store = _load_store()
+        is_in_store = submission.session_id in store
+        if is_in_store:
+            if store[submission.session_id]["user_id"] != submission.user_id:
                 raise HTTPException(status_code=403, detail="Unauthorized session access.")
             
-            _interview_sessions_store[submission.session_id]["user_answers"] = answers_data
-            _interview_sessions_store[submission.session_id]["status"] = "pending_evaluation"
+            store[submission.session_id]["user_answers"] = answers_data
+            store[submission.session_id]["status"] = "pending_evaluation"
+            _save_store(store)
             
         # 3. Best-effort write to Supabase
         if supabase:
             try:
                 # Validate the session exists and belongs to the user
                 db_query = supabase.table("interview_sessions").select("id").eq("id", submission.session_id).eq("user_id", submission.user_id).execute()
-                if not db_query.data and not is_in_memory:
+                if not db_query.data and not is_in_store:
                     raise HTTPException(status_code=404, detail="Interview session not found or unauthorized.")
 
                 if db_query.data:
-                    # Update the Supabase session record
                     db_response = supabase.table("interview_sessions").update({
                         "user_answers": answers_data,
-                        "status": "pending_evaluation" # Setting state for the evaluate.py router to pick up
+                        "status": "pending_evaluation"
                     }).eq("id", submission.session_id).execute()
             except Exception as supabase_err:
-                # If we couldn't reach Supabase, but we had it in memory, we can proceed.
-                if not is_in_memory:
-                    raise HTTPException(status_code=500, detail="Database unreachable and session not found in memory.")
+                if not is_in_store:
+                    raise HTTPException(status_code=500, detail="Database unreachable and session not found locally.")
         
-        elif not is_in_memory:
-            # Neither Supabase nor memory had it
+        elif not is_in_store:
             raise HTTPException(status_code=404, detail="Interview session not found.")
 
         return {
@@ -225,15 +244,16 @@ async def get_interview_history(user_id: str):
             except Exception:
                 pass # Fail silently
                 
-        # Also grab any built up in-memory sessions that haven't synced
-        memory_history = [
-            session for session in _interview_sessions_store.values() 
+        # Also grab any local sessions that haven't synced
+        local_store = _load_store()
+        local_history = [
+            session for session in local_store.values() 
             if session.get("user_id") == user_id
         ]
         
-        # Merge, preferring DB ones if there's an ID collision (unlikely)
+        # Merge, preferring DB ones if there's an ID collision
         db_ids = {s.get("id") for s in db_history}
-        merged_history = db_history + [s for s in memory_history if s.get("id") not in db_ids]
+        merged_history = db_history + [s for s in local_history if s.get("id") not in db_ids]
 
         return {"status": "success", "history": merged_history}
     except Exception as e:

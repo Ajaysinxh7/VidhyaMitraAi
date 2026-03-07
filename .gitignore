@@ -37,3 +37,9 @@ env/
 .pytest_cache/
 .coverage
 htmlcov/
+_quiz_store.json
+_interview_store.json
+_roadmap_store.json
+
+# Temporary testing scripts
+ping_supabase*.py

@@ -1,4 +1,5 @@
 import { Link, useLocation } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
     LayoutDashboard,
     FileText,
@@ -8,58 +9,222 @@ import {
     Map,
     HelpCircle,
     MessageSquare,
-    TrendingUp
+    TrendingUp,
+    Brain,
+    X,
+    ChevronRight,
+    Sparkles
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 
-export default function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean, setIsOpen: (val: boolean) => void }) {
+interface NavLink {
+    name: string;
+    path: string;
+    icon: LucideIcon;
+}
+
+interface NavGroup {
+    label: string;
+    links: NavLink[];
+}
+
+const navGroups: NavGroup[] = [
+    {
+        label: 'Overview',
+        links: [
+            { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
+            { name: 'Progress', path: '/progress', icon: TrendingUp },
+        ],
+    },
+    {
+        label: 'Resume Tools',
+        links: [
+            { name: 'Resume Builder', path: '/resume-builder', icon: FileText },
+            { name: 'Resume Analyzer', path: '/resume', icon: Search },
+        ],
+    },
+    {
+        label: 'Assessment',
+        links: [
+            { name: 'Evaluate Skills', path: '/evaluating', icon: CheckCircle },
+            { name: 'Eligibility', path: '/eligibility', icon: Award },
+            { name: 'Quiz', path: '/quiz', icon: HelpCircle },
+        ],
+    },
+    {
+        label: 'Career Prep',
+        links: [
+            { name: 'Roadmap', path: '/roadmap', icon: Map },
+            { name: 'Mock Interview', path: '/interview', icon: MessageSquare },
+        ],
+    },
+];
+
+const sidebarVariants = {
+    hidden: { x: -280, opacity: 0 },
+    visible: {
+        x: 0,
+        opacity: 1,
+        transition: { type: 'spring', stiffness: 300, damping: 30 },
+    },
+    exit: {
+        x: -280,
+        opacity: 0,
+        transition: { duration: 0.2 },
+    },
+};
+
+const groupVariants = {
+    hidden: { opacity: 0, y: 8 },
+    visible: (i: number) => ({
+        opacity: 1,
+        y: 0,
+        transition: { delay: i * 0.06, duration: 0.3, ease: 'easeOut' },
+    }),
+};
+
+export default function Sidebar({ isOpen, setIsOpen }: { isOpen: boolean; setIsOpen: (val: boolean) => void }) {
     const location = useLocation();
-
-    const links = [
-        { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
-        { name: 'Resume Building', path: '/resume-builder', icon: FileText },
-        { name: 'Resume Analyzing', path: '/resume', icon: Search },
-        { name: 'Evaluating', path: '/evaluating', icon: CheckCircle },
-        { name: 'Eligibility', path: '/eligibility', icon: Award },
-        { name: 'Planning & Roadmap', path: '/roadmap', icon: Map },
-        { name: 'Quiz', path: '/quiz', icon: HelpCircle },
-        { name: 'Interview', path: '/interview', icon: MessageSquare },
-        { name: 'Progress Tracking', path: '/progress', icon: TrendingUp },
-    ];
-
     const isActive = (path: string) => location.pathname === path;
 
-    return (
-        <aside
-            className={`fixed inset-y-0 left-0 z-40 w-64 bg-slate-900 border-r border-slate-800 transform transition-transform duration-300 ease-in-out md:translate-x-0 md:static md:inset-0 ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}
-        >
-            <div className="h-full flex flex-col overflow-y-auto">
-                <div className="p-4 border-b border-slate-800 flex items-center justify-between md:hidden">
-                    <span className="text-xl font-bold bg-gradient-to-r from-blue-400 to-indigo-500 bg-clip-text text-transparent">Menu</span>
-                    <button onClick={() => setIsOpen(false)} className="text-slate-400 hover:text-white">
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                    </button>
-                </div>
+    const SidebarContent = () => (
+        <div className="h-full flex flex-col relative overflow-hidden">
+            {/* Background glow blobs */}
+            <div className="absolute top-0 left-0 w-40 h-40 bg-indigo-500/5 rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute bottom-20 right-0 w-32 h-32 bg-cyan-500/5 rounded-full blur-3xl pointer-events-none" />
 
-                <nav className="flex-1 px-3 py-6 space-y-1">
-                    {links.map((link) => {
-                        const Icon = link.icon;
-                        return (
-                            <Link
-                                key={link.name}
-                                to={link.path}
-                                onClick={() => setIsOpen(false)}
-                                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 group focus:outline-none focus:ring-0 ${isActive(link.path)
-                                    ? 'bg-blue-600/10 text-blue-400 border border-blue-500/20 shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)]'
-                                    : 'text-slate-400 border border-transparent hover:bg-slate-800/50 hover:text-slate-200'
-                                    }`}
-                            >
-                                <Icon className={`h-5 w-5 ${isActive(link.path) ? 'text-blue-500' : 'text-slate-500 group-hover:text-slate-400'}`} />
-                                {link.name}
-                            </Link>
-                        );
-                    })}
-                </nav>
+            {/* Brand Header */}
+            <div className="p-5 border-b border-white/[0.04]">
+                <Link to="/" className="flex items-center gap-3 group">
+                    <div className="relative">
+                        <div className="absolute inset-0 bg-indigo-500/20 rounded-xl blur-lg group-hover:bg-indigo-500/30 transition-all duration-500" />
+                        <div className="relative h-10 w-10 rounded-xl bg-gradient-to-br from-indigo-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                            <Brain className="h-5 w-5 text-white" />
+                        </div>
+                    </div>
+                    <div className="flex flex-col">
+                        <span className="text-lg font-bold gradient-text tracking-tight">VidyaMitra</span>
+                        <span className="text-[10px] uppercase tracking-[0.2em] text-slate-500 font-medium">AI Career Coach</span>
+                    </div>
+                </Link>
+
+                {/* Mobile close button */}
+                <button
+                    onClick={() => setIsOpen(false)}
+                    className="absolute top-5 right-4 md:hidden p-1.5 text-slate-500 hover:text-white hover:bg-white/5 rounded-lg transition-colors"
+                >
+                    <X className="h-5 w-5" />
+                </button>
             </div>
-        </aside>
+
+            {/* Navigation Groups */}
+            <nav className="flex-1 px-3 py-4 space-y-5 overflow-y-auto relative z-10">
+                {navGroups.map((group, groupIndex) => (
+                    <motion.div
+                        key={group.label}
+                        custom={groupIndex}
+                        variants={groupVariants}
+                        initial="hidden"
+                        animate="visible"
+                    >
+                        <p className="px-3 mb-2 text-[10px] uppercase tracking-[0.15em] font-semibold text-slate-500/80">
+                            {group.label}
+                        </p>
+                        <div className="space-y-0.5">
+                            {group.links.map((link) => {
+                                const Icon = link.icon;
+                                const active = isActive(link.path);
+                                return (
+                                    <Link
+                                        key={link.name}
+                                        to={link.path}
+                                        onClick={() => setIsOpen(false)}
+                                        className={`relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-[13px] font-medium transition-all duration-300 group/link focus:outline-none ${active
+                                            ? 'text-white'
+                                            : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.03]'
+                                            }`}
+                                    >
+                                        {/* Active state background with glow */}
+                                        {active && (
+                                            <motion.div
+                                                layoutId="sidebar-active"
+                                                className="absolute inset-0 rounded-xl bg-gradient-to-r from-indigo-500/[0.12] to-cyan-500/[0.06] border border-indigo-500/20"
+                                                style={{
+                                                    boxShadow: '0 0 20px rgba(99, 102, 241, 0.08), inset 0 1px 0 rgba(255,255,255,0.04)',
+                                                }}
+                                                transition={{ type: 'spring', stiffness: 350, damping: 30 }}
+                                            />
+                                        )}
+
+                                        <div className={`relative z-10 p-1 rounded-lg transition-all duration-300 ${active
+                                            ? 'text-indigo-400'
+                                            : 'text-slate-500 group-hover/link:text-slate-400'
+                                            }`}>
+                                            <Icon className="h-4 w-4" />
+                                        </div>
+
+                                        <span className="relative z-10 flex-1">{link.name}</span>
+
+                                        {active && (
+                                            <ChevronRight className="relative z-10 h-3.5 w-3.5 text-indigo-400/60" />
+                                        )}
+                                    </Link>
+                                );
+                            })}
+                        </div>
+                    </motion.div>
+                ))}
+            </nav>
+
+            {/* Bottom AI Promo Card */}
+            <div className="p-3 mt-auto">
+                <div className="relative overflow-hidden rounded-xl p-4 bg-gradient-to-br from-indigo-500/10 via-purple-500/5 to-cyan-500/10 border border-indigo-500/10">
+                    <div className="absolute top-0 right-0 w-20 h-20 bg-indigo-500/10 rounded-full blur-2xl" />
+                    <div className="relative z-10">
+                        <div className="flex items-center gap-2 mb-2">
+                            <Sparkles className="h-4 w-4 text-indigo-400" />
+                            <span className="text-xs font-semibold text-indigo-300">AI Powered</span>
+                        </div>
+                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                            Your personalized career coach, powered by advanced AI.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+
+    return (
+        <>
+            {/* Desktop Sidebar - always visible */}
+            <aside className="hidden md:block w-[260px] min-w-[260px] bg-[#060b18]/80 backdrop-blur-xl border-r border-white/[0.04] relative">
+                <SidebarContent />
+            </aside>
+
+            {/* Mobile Sidebar - animated overlay */}
+            <AnimatePresence>
+                {isOpen && (
+                    <>
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            transition={{ duration: 0.2 }}
+                            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
+                            onClick={() => setIsOpen(false)}
+                        />
+                        <motion.aside
+                            variants={sidebarVariants}
+                            initial="hidden"
+                            animate="visible"
+                            exit="exit"
+                            className="fixed inset-y-0 left-0 z-50 w-[260px] bg-[#060b18]/95 backdrop-blur-xl border-r border-white/[0.04] md:hidden"
+                        >
+                            <SidebarContent />
+                        </motion.aside>
+                    </>
+                )}
+            </AnimatePresence>
+        </>
     );
 }

@@ -110,8 +110,8 @@ export const generateQuiz = async (
 
 /** Submits quiz answers for grading via POST /quiz/submit */
 export const submitQuiz = async (
-    quizId: string,
     userId: string,
+    quizId: string,
     answers: QuizAnswerItem[]
 ): Promise<SubmitQuizResponse> => {
     const { data } = await apiClient.post('/quiz/submit', {
@@ -150,7 +150,7 @@ export interface GenerateRoadmapResponse {
 export const generateRoadmap = async (
     userId: string,
     goal: string,
-    timelineMonths: number = 6
+    timelineMonths: number
 ): Promise<GenerateRoadmapResponse> => {
     const { data } = await apiClient.post('/roadmap/generate', {
         user_id: userId,

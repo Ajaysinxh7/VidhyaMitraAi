@@ -1,6 +1,7 @@
 import os
 import json
 import uuid
+from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Optional, Any
@@ -10,8 +11,6 @@ import httpx
 
 load_dotenv()
 
-# ── Supabase (optional) ────────────────────────────────────────────────────────
-# If Supabase is unreachable, roadmap data is stored in-memory for the session.
 try:
     from supabase import create_client, Client
     _supabase_url = os.getenv("SUPABASE_URL")
@@ -20,8 +19,27 @@ try:
 except Exception:
     supabase = None
 
-# In-memory fallback store  { roadmap_id: { ...roadmap_data } }
-_roadmap_store: Dict[str, dict] = {}
+# File-backed roadmap store
+_STORE_PATH = Path(__file__).resolve().parent.parent / "_roadmap_store.json"
+
+def _load_store() -> Dict[str, dict]:
+    try:
+        if _STORE_PATH.exists():
+            return json.loads(_STORE_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+def _save_store(store: Dict[str, dict]) -> None:
+    """Persist store to disk. Cap at 200 entries (oldest purged first)."""
+    try:
+        if len(store) > 200:
+            sorted_keys = sorted(store.keys())
+            for k in sorted_keys[:len(store) - 200]:
+                del store[k]
+        _STORE_PATH.write_text(json.dumps(store, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
 
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY")
@@ -159,9 +177,10 @@ Rules:
                 if px_response.status_code == 200 and px_response.json().get("photos"):
                     dashboard_image = px_response.json()["photos"][0]["src"]["landscape"]  # Prefer landscape for backgrounds
 
-        # ── Always save to in-memory store ────────────────────────────────────
+        # ── Save to file-backed store ────────────────────────────────────────
         roadmap_id = str(uuid.uuid4())
-        _roadmap_store[roadmap_id] = {
+        store = _load_store()
+        store[roadmap_id] = {
             "id": roadmap_id,
             "user_id": request.user_id,
             "goal": request.goal,
@@ -170,6 +189,7 @@ Rules:
             "recommended_videos": youtube_videos,
             "dashboard_image_url": dashboard_image,
         }
+        _save_store(store)
 
         # ── Best-effort Supabase write (skip silently if unavailable) ─────────
         if supabase:
@@ -185,11 +205,14 @@ Rules:
                 }).execute()
                 if db_response.data:
                     db_id = db_response.data[0]["id"]
-                    _roadmap_store[db_id] = _roadmap_store.pop(roadmap_id)
-                    _roadmap_store[db_id]["id"] = db_id
-                    roadmap_id = db_id
+                    if db_id != roadmap_id:
+                        store = _load_store()
+                        store[db_id] = store.pop(roadmap_id, store.get(db_id, {}))
+                        store[db_id]["id"] = db_id
+                        roadmap_id = db_id
+                        _save_store(store)
             except Exception:
-                pass  # Fall back silently to in-memory store
+                pass  # Fall back silently to file store
 
         return {
             "roadmap_id": roadmap_id,
