@@ -160,21 +160,23 @@ export default function Dashboard() {
             className="w-full relative pb-20"
         >
             {/* AI Assistant Floating Button */}
-            <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                className="fixed bottom-6 right-6 z-50 p-4 rounded-full bg-gradient-to-r from-indigo-500 to-cyan-500 text-white shadow-lg shadow-indigo-500/25 md:bottom-8 md:right-8 group float"
-            >
-                <div className="absolute inset-0 rounded-full bg-white/20 blur-md opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                <Bot className="h-6 w-6 relative z-10" />
-            </motion.button>
+            <div className="fixed bottom-6 right-6 z-50 md:bottom-8 md:right-8 float transform-gpu">
+                <motion.button
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    className="p-4 rounded-full bg-gradient-to-r from-indigo-500 to-cyan-500 text-white shadow-lg shadow-indigo-500/25 group focus:outline-none"
+                >
+                    <div className="absolute inset-0 rounded-full bg-white/20 blur-md opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none will-change-opacity" />
+                    <Bot className="h-6 w-6 relative z-10" />
+                </motion.button>
+            </div>
 
             {/* Hero Section */}
             <motion.div variants={itemVariants} className="mb-10 relative">
                 <div className="glass-strong rounded-3xl p-8 relative overflow-hidden border border-white/[0.05]">
                     {/* Background decorative glows */}
-                    <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-500/10 rounded-full blur-[80px] -translate-y-1/2 translate-x-1/2" />
-                    <div className="absolute bottom-0 left-0 w-[300px] h-[300px] bg-cyan-500/10 rounded-full blur-[60px] translate-y-1/2 -translate-x-1/4" />
+                    <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-indigo-500/10 rounded-full blur-[60px] lg:blur-[80px] -translate-y-1/2 translate-x-1/2 transform-gpu pointer-events-none" style={{ willChange: 'transform' }} />
+                    <div className="absolute bottom-0 left-0 w-[300px] h-[300px] bg-cyan-500/10 rounded-full blur-[40px] lg:blur-[60px] translate-y-1/2 -translate-x-1/4 transform-gpu pointer-events-none" style={{ willChange: 'transform' }} />
 
                     <div className="relative z-10 grid grid-cols-1 lg:grid-cols-3 gap-8 items-center">
                         <div className="lg:col-span-2">
@@ -250,7 +252,7 @@ export default function Dashboard() {
                             >
                                 {/* Shimmer effect on hover */}
                                 <div className="absolute inset-0 rounded-2xl overflow-hidden opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none">
-                                    <div className="absolute top-0 left-[-100%] w-full h-full bg-gradient-to-r from-transparent via-white/[0.05] to-transparent shimmer delay-100" />
+                                    <div className="w-full h-full shimmer delay-100" />
                                 </div>
 
                                 <div className="mb-5 relative inline-flex">

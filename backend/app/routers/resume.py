@@ -64,12 +64,16 @@ async def upload_resume(
         Resume Text:
         {extracted_text[:4000]}
         
-        You MUST respond in strictly valid JSON format matching this schema:
+        You MUST respond in strictly valid JSON format matching this schema exactly:
         {{
+            "score": 85,
             "strengths": ["skill1", "skill2"],
             "target_role_evaluated": "The role evaluated or your top recommended role",
-            "suggested_roles": ["role1", "role2", "role3"], 
-            "skill_gaps": ["gap1", "gap2"]
+            "suggested_roles": ["role1", "role2", "role3"],
+            "skill_gaps": ["gap1", "gap2"],
+            "categories": [{{"subject": "Python", "A": 90, "fullMark": 100}}],
+            "missingSkills": [{{"name": "Docker", "severity": "high"}}],
+            "courses": [{{"title": "Docker for Beginners", "provider": "Coursera", "url": "https://coursera.org"}}]
         }}
         """
 

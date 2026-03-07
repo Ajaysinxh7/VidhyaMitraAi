@@ -24,6 +24,7 @@ export default function ResumeAnalyzer() {
     const { user } = useAuth();
     const { resumeResult, setResumeResult } = useAppContext();
     const [targetRole, setTargetRole] = useState<string>('');
+    const [customRole, setCustomRole] = useState<string>('');
     const [file, setFile] = useState<File | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState('');
@@ -84,7 +85,7 @@ export default function ResumeAnalyzer() {
                             <span className="flex h-8 w-8 rounded-full bg-emerald-500/20 text-emerald-400 items-center justify-center text-sm font-bold">2</span>
                             Select Target Role
                         </h2>
-                        <div className="flex flex-wrap gap-3">
+                        <div className="flex flex-wrap gap-3 mb-4">
                             {ROLES.map(role => (
                                 <RoleChip
                                     key={role}
@@ -92,10 +93,26 @@ export default function ResumeAnalyzer() {
                                     selected={targetRole === role}
                                     onClick={() => {
                                         setTargetRole(role);
+                                        setCustomRole('');
                                         setError('');
                                     }}
                                 />
                             ))}
+                        </div>
+
+                        <div className="flex flex-col gap-2 mt-4">
+                            <label className="text-slate-400 text-sm font-medium">Or type a custom role:</label>
+                            <input
+                                type="text"
+                                value={customRole}
+                                onChange={(e) => {
+                                    setCustomRole(e.target.value);
+                                    setTargetRole(e.target.value);
+                                    setError('');
+                                }}
+                                placeholder="e.g., Blockchain Engineer"
+                                className="w-full md:w-2/3 px-4 py-3 rounded-xl bg-slate-900/50 border border-slate-700/50 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all"
+                            />
                         </div>
 
                         {error && (
