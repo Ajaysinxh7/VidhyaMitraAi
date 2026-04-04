@@ -1,51 +1,32 @@
-# VidyaMitra
+# 🎓 VidyaMitra
+> Your AI-powered Career and Interview Assistant
 
-Split stack:
+VidyaMitra is a comprehensive, end-to-end platform designed to help candidates prepare for their dream roles. It bridges the gap between learning and getting hired by providing personalized AI-driven roadmaps, resume parsing, and interactive mock interviews—all powered by modern AI models.
 
-- **`vidyamitra-frontend`** — React + Vite
-- **`vidyamitra-backend`** — FastAPI
+## 🚀 Key Features
 
-## Prerequisites
+- 📄 **Smart Resume Parsing** - Extract skills, experiences, and identify gaps directly from your uploaded resume.
+- 🗺️ **Career Roadmaps** - Get personalized, actionable steps based on where your current skills are versus the role you want.
+- 🎯 **Interactive AI Mock Interviews** - Practice against an AI interviewer tailored strictly to your skill set and target job.
+- 📊 **Real-time Analytics** - Monitor progress and feedback immediately after an interview session.
 
-- Node.js 20+ and npm
-- Python 3.11+
+## 🛠️ Technology Stack
 
-## Run locally
+VidyaMitra is split into two distinct applications to separate concerns perfectly between the client and server.
 
-### Backend
+- **`vidyamitra-frontend`**: Built with **React** and **Vite** using TypeScript for lightning-fast HMR and solid type safety. Styled with TailwindCSS and Framer Motion.
+- **`vidyamitra-backend`**: Built with **FastAPI** (Python 3.11+). Handles all AI integrations (Groq LLM) and database interactions securely.
+- **Database & Auth**: Powered by **Supabase**.
 
-```bash
-cd vidyamitra-backend
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-copy .env.example .env
-```
+## 📖 Documentation
 
-Edit `.env` with `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `GROQ_API_KEY` for full AI features. The API still starts without them; endpoints that need keys return `503` until configured.
+- **[Local Setup Guide](SETUP.md)**: Detailed step-by-step instructions on running the project locally.
+- **[Routing Sheet](vidyamitra-backend/app/ROUTING_SHEET.md)**: Backend API architecture layer setup.
 
-```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-```
+---
 
-- API: `http://localhost:8000`
-- Health: `GET http://localhost:8000/`
+## 🔒 Security Practices
 
-### Frontend
-
-```bash
-cd vidyamitra-frontend
-npm install
-copy .env.example .env
-npm run dev
-```
-
-App: `http://localhost:5173` (default Vite port).
-
-Set `VITE_API_URL=http://localhost:8000` in `vidyamitra-frontend/.env`.
-
-## Security
-
-- Do not commit `.env` files (already in `.gitignore`).
-- Keep `SUPABASE_SERVICE_ROLE_KEY` and `GROQ_API_KEY` only in the backend environment.
-- Frontend may use `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` only (public anon key).
+- **Never** commit `.env` files to source control. They are protected by `.gitignore`.
+- Your `SUPABASE_SERVICE_ROLE_KEY` and `GROQ_API_KEY` are incredibly sensitive and safely isolated in the **backend**.
+- Only harmless, public keys like `VITE_SUPABASE_URL` are exposed on the **frontend**.
