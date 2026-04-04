@@ -270,12 +270,39 @@ export interface InterviewAnalysisResponse {
     };
 }
 
+export interface PerQuestionScores {
+    technical: number;
+    communication: number;
+    confidence: number;
+}
+
 export interface InterviewPerQuestionFeedback {
     question_id: string;
     score: number;
     confidence: number;
+    scores: PerQuestionScores;
     feedback: string;
     improvements?: string[];
+    better_response?: string;
+    ideal_answer?: string;
+    transcript_excerpt?: string;
+    answer_start_offset_seconds?: number;
+    answer_end_offset_seconds?: number;
+    filler_word_count?: number;
+    eye_contact_ratio?: number;
+}
+
+export interface SkillGapItem {
+    skill: string;
+    score: number;
+    level: string;
+}
+
+export interface FinalSummary {
+    overall_score: number;
+    strengths: string[];
+    weaknesses: string[];
+    improvements: string[];
 }
 
 export interface InterviewReportResponse {
@@ -284,12 +311,15 @@ export interface InterviewReportResponse {
     interview_report: {
         technical_score: number;
         communication_score: number;
+        confidence_score: number;
         filler_word_count: number;
         eye_contact_score: number;
         final_score: number;
         final_verdict: string;
         key_strengths: string[];
         areas_for_improvement: string[];
+        final_summary: FinalSummary;
+        skill_gap_analysis: SkillGapItem[];
         per_question_feedback: InterviewPerQuestionFeedback[];
         timeline: any[];
     };

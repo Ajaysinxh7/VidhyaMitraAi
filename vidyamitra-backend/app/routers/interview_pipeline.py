@@ -635,6 +635,9 @@ async def generate_report(
     resume_data = session.get("resume_data") or {}
     timeline_summary = analysis.get("timeline_summary") or {}
 
+    # --- Safety: cap questions at 7 ---
+    per_question = per_question[:7]
+
     # Index questions by id for fast matching.
     q_by_id = {q.get("id"): q for q in questions}
 
@@ -644,181 +647,7 @@ async def generate_report(
         if qid:
             per_question_by_id[str(qid)] = item
 
-    async def eval_single_answer(item: dict) -> dict:
-        qid = item.get("question_id")
-        qid_str = str(qid) if qid is not None else ""
-        q = q_by_id.get(qid) or {}
-        question_text = q.get("text", "")
-
-        per_q_payload = {
-            "question_text": question_text,
-            "transcript_excerpt": item.get("transcript_excerpt", ""),
-            "filler_word_count": item.get("filler_word_count", 0),
-            "top_fillers": item.get("top_fillers", []),
-            "eye_contact_ratio": item.get("eye_contact_ratio", 0.0),
-            "answer_time_range_seconds": [item.get("answer_start_offset_seconds"), item.get("answer_end_offset_seconds")],
-        }
-
-        resume_preview = {
-            "skills": resume_data.get("skills", []),
-            "projects": resume_data.get("projects", [])[:5] if isinstance(resume_data.get("projects"), list) else [],
-            "experience": resume_data.get("experience", [])[:5] if isinstance(resume_data.get("experience"), list) else [],
-        }
-
-        prompt = f"""
-You are an expert interview evaluator for VidyaMitra.
-Evaluate the candidate's answer using:
-- relevance to the candidate's resume and this specific question
-- communication clarity
-- technical depth (when applicable)
-- confidence / conviction inferred from answer content
-
-Candidate answer payload:
-{json.dumps(per_q_payload, ensure_ascii=False)}
-
-Candidate resume (for relevance grounding):
-{json.dumps(resume_preview, ensure_ascii=False)}
-
-Return strictly valid JSON:
-{{
-  "question_id": "{qid_str}",
-  "score": 0,
-  "confidence": 0,
-  "feedback": "2-4 sentences of specific, actionable feedback",
-  "improvements": ["improvement 1", "improvement 2", "improvement 3"],
-  "better_response": "A better way the user should answer (concise but high-quality).",
-  "ideal_answer": "A strong model answer (can be longer)."
-}}
-"""
-
-        try:
-            resp = await openai_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are a precise, JSON-outputting interview evaluator AI. Output ONLY raw JSON. No markdown, no formatting, no conversational text.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                response_format={"type": "json_object"}
-            )
-            parsed = _json_loads_strict(resp.choices[0].message.content or "{}")
-            # Defensive normalization (never allow malformed output to break the UI).
-            if not isinstance(parsed, dict):
-                raise ValueError("Per-question evaluation is not a JSON object.")
-
-            def _clamp_0_100(value: Any) -> int:
-                try:
-                    n = float(value)
-                except Exception:
-                    return 0
-                n = max(0.0, min(100.0, n))
-                return int(round(n))
-
-            score = _clamp_0_100(parsed.get("score", 0))
-            confidence = _clamp_0_100(parsed.get("confidence", 0))
-
-            feedback = parsed.get("feedback", "")
-            improvements = parsed.get("improvements", [])
-            better_response = parsed.get("better_response", "")
-            ideal_answer = parsed.get("ideal_answer", "")
-
-            feedback_val = feedback if isinstance(feedback, str) else "Evaluation failed for this answer."
-            if isinstance(improvements, list):
-                improvements_val = [str(x) for x in improvements if x is not None]
-            else:
-                improvements_val = []
-
-            return {
-                "question_id": qid_str,
-                "score": score,
-                "confidence": confidence,
-                "feedback": feedback_val,
-                "improvements": improvements_val,
-                "better_response": better_response if isinstance(better_response, str) else "",
-                "ideal_answer": ideal_answer if isinstance(ideal_answer, str) else "",
-            }
-        except Exception:
-            return {
-                "question_id": qid_str,
-                "score": 0,
-                "confidence": 0,
-                "feedback": "Evaluation failed for this answer.",
-                "improvements": [],
-                "better_response": "",
-                "ideal_answer": "",
-            }
-
-    # Evaluate answers concurrently (demo-friendly synchronous pipeline).
-    eval_tasks = [eval_single_answer(item) for item in per_question]
-    individual_evaluations = await asyncio.gather(*eval_tasks)
-
-    overall_prompt = f"""
-You are a career coach summarizing an interview.
-Use the following individual evaluations and timeline summary to compute overall scores.
-
-Timeline summary:
-{json.dumps(timeline_summary, ensure_ascii=False)}
-
-Individual evaluations:
-{json.dumps(individual_evaluations, ensure_ascii=False)}
-
-Return strictly valid JSON:
-{{
-  "technical_score": 0,
-  "communication_score": 0,
-  "filler_word_count": 0,
-  "eye_contact_score": 0,
-  "final_score": 0,
-  "final_verdict": "A short, encouraging summary of overall performance.",
-  "key_strengths": ["Strength 1", "Strength 2", "Strength 3"],
-  "areas_for_improvement": ["Area 1", "Area 2", "Area 3"],
-  "per_question_feedback": {json.dumps(individual_evaluations, ensure_ascii=False)}
-}}
-"""
-
-    try:
-        overall_resp = await openai_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a precise, JSON-outputting career coach AI. Output ONLY raw JSON. No markdown, no formatting, no conversational text.",
-                },
-                {"role": "user", "content": overall_prompt},
-            ],
-            response_format={"type": "json_object"}
-        )
-        overall = _json_loads_strict(overall_resp.choices[0].message.content or "{}")
-    except Exception as e:
-        raise HTTPException(
-            status_code=422,
-            detail=f"AI failed to return valid overall report JSON: {str(e)}",
-        )
-
-    # Normalize per-question feedback to include required fields + answer window metadata.
-    per_q_feedback = []
-    for item in individual_evaluations:
-        qid = str(item.get("question_id") or "")
-        meta = per_question_by_id.get(qid, {})
-        per_q_feedback.append(
-            {
-                "question_id": qid,
-                "score": item.get("score", 0),
-                "confidence": item.get("confidence", 0),
-                "feedback": item.get("feedback", ""),
-                "improvements": item.get("improvements", []),
-                "better_response": item.get("better_response", ""),
-                "ideal_answer": item.get("ideal_answer", ""),
-                "answer_start_offset_seconds": meta.get("answer_start_offset_seconds", 0),
-                "answer_end_offset_seconds": meta.get("answer_end_offset_seconds", 0),
-                "transcript_excerpt": meta.get("transcript_excerpt", ""),
-                "eye_contact_ratio": meta.get("eye_contact_ratio", 0),
-                "filler_word_count": meta.get("filler_word_count", 0),
-            }
-        )
-
+    # --- Helpers ---
     def _clamp_0_100(value: Any) -> int:
         try:
             n = float(value)
@@ -827,20 +656,293 @@ Return strictly valid JSON:
         n = max(0.0, min(100.0, n))
         return int(round(n))
 
-    def _as_str_list(value: Any) -> list[str]:
+    def _truncate(text: str, max_chars: int = 500) -> str:
+        """Truncate text to limit LLM input/output size."""
+        if not isinstance(text, str):
+            return ""
+        return text[:max_chars] + ("..." if len(text) > max_chars else "")
+
+    def _as_str_list(value: Any, max_items: int = 5) -> list[str]:
         if not isinstance(value, list):
             return []
-        return [str(x) for x in value if x is not None]
+        return [_truncate(str(x), 200) for x in value[:max_items] if x is not None]
+
+    # =========================================================================
+    # STEP 1: Per-question analysis (3-axis scores + feedback)
+    #   Each question evaluated independently for accuracy.
+    # =========================================================================
+
+    async def eval_single_answer(item: dict) -> dict:
+        qid = item.get("question_id")
+        qid_str = str(qid) if qid is not None else ""
+        q = q_by_id.get(qid) or {}
+        question_text = _truncate(q.get("text", ""), 300)
+
+        # Truncate transcript to limit payload size
+        transcript_raw = item.get("transcript_excerpt", "")
+        transcript_truncated = _truncate(transcript_raw, 400)
+
+        per_q_payload = {
+            "question_text": question_text,
+            "transcript_excerpt": transcript_truncated,
+            "filler_word_count": item.get("filler_word_count", 0),
+            "top_fillers": item.get("top_fillers", [])[:5],
+            "eye_contact_ratio": item.get("eye_contact_ratio", 0.0),
+        }
+
+        resume_preview = {
+            "skills": resume_data.get("skills", [])[:15],
+            "projects": resume_data.get("projects", [])[:3] if isinstance(resume_data.get("projects"), list) else [],
+            "experience": resume_data.get("experience", [])[:3] if isinstance(resume_data.get("experience"), list) else [],
+        }
+
+        prompt = f"""You are an expert interview evaluator for VidyaMitra.
+Evaluate the candidate's answer on 3 axes (0-100 each):
+- technical_score: depth of technical knowledge shown
+- communication_score: clarity, structure, and articulation
+- confidence_score: conviction and assertiveness in delivery
+
+Also provide a concise feedback and an improved version of their answer.
+
+Candidate answer:
+{json.dumps(per_q_payload, ensure_ascii=False)}
+
+Candidate resume context:
+{json.dumps(resume_preview, ensure_ascii=False)}
+
+Return strictly valid JSON (keep text fields concise, max 3-4 sentences each):
+{{
+  "question_id": "{qid_str}",
+  "scores": {{
+    "technical": 0,
+    "communication": 0,
+    "confidence": 0
+  }},
+  "feedback": "2-3 sentences of specific, actionable feedback.",
+  "improvements": ["improvement 1", "improvement 2"],
+  "better_response": "Concise improved answer (max 4 sentences).",
+  "ideal_answer": "Strong model answer (max 5 sentences)."
+}}"""
+
+        try:
+            resp = await openai_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a precise, JSON-outputting interview evaluator AI. Output ONLY raw JSON. No markdown, no formatting, no conversational text. Keep all text fields concise.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                response_format={"type": "json_object"}
+            )
+            parsed = _json_loads_strict(resp.choices[0].message.content or "{}")
+            if not isinstance(parsed, dict):
+                raise ValueError("Per-question evaluation is not a JSON object.")
+
+            # Extract 3-axis scores
+            scores_raw = parsed.get("scores", {})
+            if not isinstance(scores_raw, dict):
+                scores_raw = {}
+            tech = _clamp_0_100(scores_raw.get("technical", parsed.get("score", 0)))
+            comm = _clamp_0_100(scores_raw.get("communication", 0))
+            conf = _clamp_0_100(scores_raw.get("confidence", parsed.get("confidence", 0)))
+
+            # Deterministic combined score
+            combined_score = int(round((tech + comm + conf) / 3))
+
+            feedback = parsed.get("feedback", "")
+            improvements = parsed.get("improvements", [])
+            better_response = parsed.get("better_response", "")
+            ideal_answer = parsed.get("ideal_answer", "")
+
+            feedback_val = _truncate(feedback, 500) if isinstance(feedback, str) else "Evaluation failed for this answer."
+            if isinstance(improvements, list):
+                improvements_val = [_truncate(str(x), 200) for x in improvements[:3] if x is not None]
+            else:
+                improvements_val = []
+
+            return {
+                "question_id": qid_str,
+                "score": combined_score,
+                "confidence": conf,
+                "scores": {
+                    "technical": tech,
+                    "communication": comm,
+                    "confidence": conf,
+                },
+                "feedback": feedback_val,
+                "improvements": improvements_val,
+                "better_response": _truncate(better_response, 600) if isinstance(better_response, str) else "",
+                "ideal_answer": _truncate(ideal_answer, 600) if isinstance(ideal_answer, str) else "",
+            }
+        except Exception:
+            return {
+                "question_id": qid_str,
+                "score": 0,
+                "confidence": 0,
+                "scores": {"technical": 0, "communication": 0, "confidence": 0},
+                "feedback": "Evaluation failed for this answer.",
+                "improvements": [],
+                "better_response": "",
+                "ideal_answer": "",
+            }
+
+    # Evaluate answers concurrently.
+    eval_tasks = [eval_single_answer(item) for item in per_question]
+    individual_evaluations = list(await asyncio.gather(*eval_tasks))
+
+    # =========================================================================
+    # STEP 2: Final summary + skill gap analysis (separate LLM call)
+    #   Uses aggregated per-question scores for accuracy.
+    # =========================================================================
+
+    # Compute deterministic overall scores from per-question results
+    all_tech = [e.get("scores", {}).get("technical", 0) for e in individual_evaluations]
+    all_comm = [e.get("scores", {}).get("communication", 0) for e in individual_evaluations]
+    all_conf = [e.get("scores", {}).get("confidence", 0) for e in individual_evaluations]
+
+    avg_tech = int(round(sum(all_tech) / max(len(all_tech), 1)))
+    avg_comm = int(round(sum(all_comm) / max(len(all_comm), 1)))
+    avg_conf = int(round(sum(all_conf) / max(len(all_conf), 1)))
+    deterministic_final = int(round((avg_tech + avg_comm + avg_conf) / 3))
+
+    # Prepare compact evaluation summary for the second LLM call
+    compact_evals = []
+    for e in individual_evaluations:
+        qid = e.get("question_id", "")
+        q = q_by_id.get(qid) or {}
+        compact_evals.append({
+            "question": _truncate(q.get("text", ""), 100),
+            "scores": e.get("scores", {}),
+            "feedback_snippet": _truncate(e.get("feedback", ""), 100),
+        })
+
+    # Extract skills for gap analysis (top 8)
+    resume_skills = resume_data.get("skills", [])
+    if isinstance(resume_skills, list):
+        resume_skills = [str(s) for s in resume_skills if s][:8]
+    else:
+        resume_skills = []
+
+    summary_prompt = f"""You are a career coach writing an interview summary.
+
+Overall computed scores:
+- Technical: {avg_tech}/100
+- Communication: {avg_comm}/100
+- Confidence: {avg_conf}/100
+- Final: {deterministic_final}/100
+
+Timeline stats: {json.dumps(timeline_summary, ensure_ascii=False)}
+
+Per-question summaries:
+{json.dumps(compact_evals, ensure_ascii=False)}
+
+Candidate's resume skills: {json.dumps(resume_skills, ensure_ascii=False)}
+
+Return strictly valid JSON with:
+1. A short final verdict
+2. Key strengths (max 4)
+3. Key weaknesses (max 4)
+4. Improvement suggestions (max 4)
+5. Skill gap analysis: for each resume skill, estimate a proficiency score (0-100) based on interview performance, and a level label.
+
+Schema:
+{{
+  "final_verdict": "2-3 sentence encouraging summary.",
+  "strengths": ["strength 1", "strength 2"],
+  "weaknesses": ["weakness 1", "weakness 2"],
+  "improvements": ["suggestion 1", "suggestion 2"],
+  "skill_gap_analysis": [
+    {{"skill": "React", "score": 70, "level": "Proficient"}},
+    {{"skill": "System Design", "score": 40, "level": "Needs Improvement"}}
+  ]
+}}"""
+
+    try:
+        summary_resp = await openai_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a precise, JSON-outputting career coach AI. Output ONLY raw JSON. No markdown, no formatting. Keep all text concise.",
+                },
+                {"role": "user", "content": summary_prompt},
+            ],
+            response_format={"type": "json_object"}
+        )
+        summary_data = _json_loads_strict(summary_resp.choices[0].message.content or "{}")
+    except Exception as e:
+        # Fallback: use computed values without AI summary
+        summary_data = {
+            "final_verdict": "Interview analysis complete. Review your per-question feedback for detailed insights.",
+            "strengths": [],
+            "weaknesses": [],
+            "improvements": [],
+            "skill_gap_analysis": [],
+        }
+
+    # Normalize skill gap (cap at 8, clamp scores)
+    raw_skill_gaps = summary_data.get("skill_gap_analysis", [])
+    if not isinstance(raw_skill_gaps, list):
+        raw_skill_gaps = []
+    skill_gap_analysis = []
+    for sg in raw_skill_gaps[:8]:
+        if not isinstance(sg, dict):
+            continue
+        skill_gap_analysis.append({
+            "skill": _truncate(str(sg.get("skill", "")), 50),
+            "score": _clamp_0_100(sg.get("score", 0)),
+            "level": _truncate(str(sg.get("level", "Unknown")), 30),
+        })
+
+    # Normalize per-question feedback with answer window metadata + timestamp buffer
+    per_q_feedback = []
+    for item in individual_evaluations:
+        qid = str(item.get("question_id") or "")
+        meta = per_question_by_id.get(qid, {})
+
+        # Apply -1 sec buffer to start timestamps for better seek alignment
+        raw_start = float(meta.get("answer_start_offset_seconds", 0) or 0)
+        buffered_start = max(0.0, raw_start - 1.0)
+
+        per_q_feedback.append(
+            {
+                "question_id": qid,
+                "score": item.get("score", 0),
+                "confidence": item.get("confidence", 0),
+                "scores": item.get("scores", {"technical": 0, "communication": 0, "confidence": 0}),
+                "feedback": item.get("feedback", ""),
+                "improvements": item.get("improvements", []),
+                "better_response": item.get("better_response", ""),
+                "ideal_answer": item.get("ideal_answer", ""),
+                "answer_start_offset_seconds": buffered_start,
+                "answer_end_offset_seconds": float(meta.get("answer_end_offset_seconds", 0) or 0),
+                "transcript_excerpt": _truncate(meta.get("transcript_excerpt", ""), 500),
+                "eye_contact_ratio": meta.get("eye_contact_ratio", 0),
+                "filler_word_count": meta.get("filler_word_count", 0),
+            }
+        )
 
     interview_report = {
-        "technical_score": _clamp_0_100(overall.get("technical_score", 0)),
-        "communication_score": _clamp_0_100(overall.get("communication_score", 0)),
-        "filler_word_count": int(overall.get("filler_word_count", 0) or 0),
-        "eye_contact_score": _clamp_0_100(overall.get("eye_contact_score", 0)),
-        "final_score": _clamp_0_100(overall.get("final_score", 0)),
-        "final_verdict": overall.get("final_verdict", "") if isinstance(overall.get("final_verdict", ""), str) else "",
-        "key_strengths": _as_str_list(overall.get("key_strengths", [])),
-        "areas_for_improvement": _as_str_list(overall.get("areas_for_improvement", [])),
+        "technical_score": avg_tech,
+        "communication_score": avg_comm,
+        "confidence_score": avg_conf,
+        "filler_word_count": int(timeline_summary.get("filler_word", 0) or 0),
+        "eye_contact_score": _clamp_0_100(timeline_summary.get("eye_contact", 0)),
+        "final_score": deterministic_final,
+        "final_verdict": _truncate(
+            summary_data.get("final_verdict", "") if isinstance(summary_data.get("final_verdict"), str) else "", 500
+        ),
+        "key_strengths": _as_str_list(summary_data.get("strengths", []), 4),
+        "areas_for_improvement": _as_str_list(summary_data.get("weaknesses", []), 4),
+        "final_summary": {
+            "overall_score": deterministic_final,
+            "strengths": _as_str_list(summary_data.get("strengths", []), 4),
+            "weaknesses": _as_str_list(summary_data.get("weaknesses", []), 4),
+            "improvements": _as_str_list(summary_data.get("improvements", []), 4),
+        },
+        "skill_gap_analysis": skill_gap_analysis,
         "per_question_feedback": per_q_feedback,
         "timeline": analysis.get("timeline", []),
     }

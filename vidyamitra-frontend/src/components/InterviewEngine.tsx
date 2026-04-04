@@ -41,6 +41,26 @@ type AnswerWindowMs = {
 type InterviewReport = {
   timeline: any[];
   per_question_feedback?: any[];
+  technical_score?: number;
+  communication_score?: number;
+  confidence_score?: number;
+  filler_word_count?: number;
+  eye_contact_score?: number;
+  final_score?: number;
+  final_verdict?: string;
+  key_strengths?: string[];
+  areas_for_improvement?: string[];
+  final_summary?: {
+    overall_score: number;
+    strengths: string[];
+    weaknesses: string[];
+    improvements: string[];
+  };
+  skill_gap_analysis?: Array<{
+    skill: string;
+    score: number;
+    level: string;
+  }>;
 };
 
 function speakQuestion(text: string) {
@@ -527,6 +547,7 @@ export default function InterviewEngine() {
                 timelineData={timelineData}
                 perQuestionFeedback={report?.per_question_feedback}
                 questions={questions}
+                report={report}
               />
             </motion.div>
           )}
