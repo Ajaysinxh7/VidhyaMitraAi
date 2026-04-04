@@ -1,32 +1,51 @@
-# VidyaMitra 🚀
+# VidyaMitra
 
-VidyaMitra is an advanced, AI-powered career assistant platform featuring a modern React frontend and a robust FastAPI backend. It provides users with a comprehensive suite of AI agents to help them build, analyze, and evaluate their resumes, plan their career paths, take practice quizzes, prepare for interviews, and track their progress.
+Split stack:
 
-## 🌟 Features
+- **`vidyamitra-frontend`** — React + Vite
+- **`vidyamitra-backend`** — FastAPI
 
-Our platform integrates 8 distinct AI-driven functionalities:
+## Prerequisites
 
-- **Resume Building:** Generate professional resumes tailored to your industry.
-- **Resume Analyzing:** Get AI feedback on your existing resume's strengths and weaknesses.
-- **Evaluating:** Evaluate your skills and readiness for specific roles.
-- **Eligibility Criteria:** Check your qualifications against job requirements.
-- **Planning:** Create actionable career and learning plans.
-- **Quiz:** Test your knowledge with dynamically generated quizzes.
-- **Interview:** Practice with realistic, AI-conducted mock interviews.
-- **Progress Tracking:** Monitor your learning and application journey.
+- Node.js 20+ and npm
+- Python 3.11+
 
-## 🛠️ Technology Stack
+## Run locally
 
-- **Frontend:** React 19, Vite, TypeScript, Tailwind CSS 4, Framer Motion, Recharts
-- **Backend:** Python, FastAPI, Uvicorn, Pydantic
-- **AI/LLM Integration:** OpenAI, Groq
-- **Database & Auth:** Supabase
-- **Document Processing:** PyMuPDF, python-docx, NLTK
+### Backend
 
-## 🚀 Getting Started
+```bash
+cd vidyamitra-backend
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+copy .env.example .env
+```
 
-To get a local copy up and running, please refer to our detailed setup guide in [SETUP.md](SETUP.md).
+Edit `.env` with `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `GROQ_API_KEY` for full AI features. The API still starts without them; endpoints that need keys return `503` until configured.
 
-## 🔒 Security Note
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
 
-This project uses various API keys for AI models and database services. Please ensure you keep your `.env` files secure and never commit them to public repositories. All sensitive data has been omitted from the configuration templates.
+- API: `http://localhost:8000`
+- Health: `GET http://localhost:8000/`
+
+### Frontend
+
+```bash
+cd vidyamitra-frontend
+npm install
+copy .env.example .env
+npm run dev
+```
+
+App: `http://localhost:5173` (default Vite port).
+
+Set `VITE_API_URL=http://localhost:8000` in `vidyamitra-frontend/.env`.
+
+## Security
+
+- Do not commit `.env` files (already in `.gitignore`).
+- Keep `SUPABASE_SERVICE_ROLE_KEY` and `GROQ_API_KEY` only in the backend environment.
+- Frontend may use `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` only (public anon key).
