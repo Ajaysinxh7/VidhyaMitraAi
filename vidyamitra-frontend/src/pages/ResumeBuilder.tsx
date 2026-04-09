@@ -1,376 +1,575 @@
-import { useState, useRef, useEffect } from 'react';
-import { Plus, Trash2, FileText, ArrowLeft, Maximize2, Download } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useState } from 'react';
+import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../services/supabaseClient';
+import {
+    Download, Plus, Trash2, Save, ChevronDown, ChevronUp,
+    User, Briefcase, GraduationCap, Award, Code2, FolderGit2,
+    Link2, Mail, Phone, MapPin, GitBranch, Globe,
+    CheckCircle2
+} from 'lucide-react';
+
+interface ResumeData {
+    name: string; role: string; email: string; phone: string; location: string;
+    linkedin: string; github: string; portfolio: string;
+    summary: string;
+    skills: { label: string; value: string }[];
+    experience: { company: string; role: string; duration: string; bullets: string[] }[];
+    projects: { title: string; tech: string; github: string; live: string; desc: string }[];
+    education: { degree: string; institute: string; startYear: string; endYear: string; gpa: string }[];
+    certifications: { title: string; issuer: string; year: string }[];
+    languages: string;
+}
 
 export default function ResumeBuilder() {
-    const [personalInfo, setPersonalInfo] = useState({ name: '', email: '', phone: '', summary: '' });
-    const [experience, setExperience] = useState([{ company: '', role: '', duration: '', description: '' }]);
-    const [skills, setSkills] = useState('');
-    const [isSubmitting, setIsSubmitting] = useState(false);
-    const [activeTab, setActiveTab] = useState<'personal' | 'experience' | 'skills'>('personal');
-    const [previewMode, setPreviewMode] = useState(false);
+    const { user } = useAuth();
+    const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+    const [openSections, setOpenSections] = useState<Record<string, boolean>>({
+        personal: true, summary: true, experience: true, projects: true,
+        education: true, skills: true, certifications: true
+    });
 
-    const personalRef = useRef<HTMLDivElement>(null);
-    const expRef = useRef<HTMLDivElement>(null);
-    const skillsRef = useRef<HTMLDivElement>(null);
+    const [data, setData] = useState<ResumeData>({
+        name: '', role: '', email: '', phone: '', location: '',
+        linkedin: '', github: '', portfolio: '',
+        summary: '',
+        skills: [{ label: '', value: '' }],
+        experience: [{ company: '', role: '', duration: '', bullets: [''] }],
+        projects: [{ title: '', tech: '', github: '', live: '', desc: '' }],
+        education: [{ degree: '', institute: '', startYear: '', endYear: '', gpa: '' }],
+        certifications: [{ title: '', issuer: '', year: '' }],
+        languages: ''
+    });
 
-    // Smooth scroll to the active section when tab changes
-    useEffect(() => {
-        if (previewMode) return;
-        
-        const timer = setTimeout(() => {
-            if (activeTab === 'personal' && personalRef.current) {
-                personalRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            } else if (activeTab === 'experience' && expRef.current) {
-                expRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            } else if (activeTab === 'skills' && skillsRef.current) {
-                skillsRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }
-        }, 150);
-        return () => clearTimeout(timer);
-    }, [activeTab, previewMode]);
-
-    const handleAddExperience = () => {
-        setExperience([...experience, { company: '', role: '', duration: '', description: '' }]);
+    // --- HANDLERS ---
+    const toggleSection = (key: string) => setOpenSections(p => ({ ...p, [key]: !p[key] }));
+    const handleChange = (field: string, value: string) => setData(p => ({ ...p, [field]: value }));
+    const handleSkillChange = (index: number, field: 'label' | 'value', val: string) => {
+        const updated = [...data.skills];
+        updated[index] = { ...updated[index], [field]: val };
+        setData({ ...data, skills: updated });
+    };
+    const addSkill = () => setData({ ...data, skills: [...data.skills, { label: '', value: '' }] });
+    const removeSkill = (index: number) => {
+        if (data.skills.length <= 1) return;
+        setData({ ...data, skills: data.skills.filter((_, i) => i !== index) });
     };
 
-    const handleRemoveExperience = (index: number) => {
-        const newExp = experience.filter((_, i) => i !== index);
-        setExperience(newExp);
+    const handleListChange = (section: keyof ResumeData, index: number, field: string, value: string) => {
+        let finalValue = value;
+        if (field === 'year' || field === 'startYear' || field === 'endYear') {
+            finalValue = value.replace(/\D/g, '').slice(0, 4);
+        }
+        const updated = [...(data[section] as any[])];
+        updated[index] = { ...updated[index], [field]: finalValue };
+        setData({ ...data, [section]: updated });
+    };
+    const addItem = (section: keyof ResumeData, template: any) => setData({ ...data, [section]: [...(data[section] as any[]), template] });
+    const removeItem = (section: keyof ResumeData, index: number) => {
+        if ((data[section] as any[]).length <= 1) return;
+        setData({ ...data, [section]: (data[section] as any[]).filter((_: any, i: number) => i !== index) });
     };
 
-    const handleExpChange = (index: number, field: string, value: string) => {
-        const newExp = [...experience];
-        newExp[index] = { ...newExp[index], [field]: value };
-        setExperience(newExp);
+    // Experience bullets
+    const handleBulletChange = (expIdx: number, bulletIdx: number, value: string) => {
+        const updated = [...data.experience];
+        updated[expIdx] = { ...updated[expIdx], bullets: [...updated[expIdx].bullets] };
+        updated[expIdx].bullets[bulletIdx] = value;
+        setData({ ...data, experience: updated });
+    };
+    const addBullet = (expIdx: number) => {
+        const updated = [...data.experience];
+        updated[expIdx] = { ...updated[expIdx], bullets: [...updated[expIdx].bullets, ''] };
+        setData({ ...data, experience: updated });
+    };
+    const removeBullet = (expIdx: number, bulletIdx: number) => {
+        const updated = [...data.experience];
+        if (updated[expIdx].bullets.length <= 1) return;
+        updated[expIdx] = { ...updated[expIdx], bullets: updated[expIdx].bullets.filter((_: string, i: number) => i !== bulletIdx) };
+        setData({ ...data, experience: updated });
     };
 
-    const handleSave = async () => {
-        setIsSubmitting(true);
-        // Simulate API call
-        setTimeout(() => {
-            setIsSubmitting(false);
-            setPreviewMode(true);
-        }, 500);
+    // Save to Supabase
+    const saveResume = async () => {
+        setSaveStatus('saving');
+        try {
+            const userId = user?.id || '';
+            await supabase.from('resumes').insert({
+                user_id: userId,
+                title: data.role || 'Untitled Resume',
+                data: data,
+            });
+            setSaveStatus('saved');
+            setTimeout(() => setSaveStatus('idle'), 3000);
+        } catch (err) {
+            alert('Error saving resume. Please check connection.');
+            setSaveStatus('idle');
+        }
     };
+
+    const handlePrint = () => window.print();
+
+    // Accordion helper (plain render, NOT a component — avoids remount/focus-loss)
+    const renderAccordion = (id: string, Icon: any, title: string, color: string, children: React.ReactNode) => (
+        <div style={accordionBox} key={id}>
+            <div style={accordionHeader} onClick={() => toggleSection(id)}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <div style={{ ...accordionIconBox, background: `${color}15`, color }}><Icon size={16} /></div>
+                    <span style={{ fontWeight: '700', fontSize: '13px', textTransform: 'uppercase' as const, letterSpacing: '0.5px' }}>{title}</span>
+                </div>
+                {openSections[id] ? <ChevronUp size={16} color="#64748b" /> : <ChevronDown size={16} color="#64748b" />}
+            </div>
+            {openSections[id] && <div style={accordionBody}>{children}</div>}
+        </div>
+    );
 
     return (
-        <div className="w-full h-[calc(100vh-80px)] overflow-hidden p-4 sm:p-6 lg:p-8 flex gap-8">
-            <AnimatePresence mode="wait">
-                {!previewMode && (
-                    <motion.div 
-                        key="form-section"
-                        initial={{ opacity: 0, x: -20, width: 0 }}
-                        animate={{ opacity: 1, x: 0, width: '50%' }}
-                        exit={{ opacity: 0, x: -50, width: 0, padding: 0 }}
-                        transition={{ duration: 0.4, ease: 'easeInOut' }}
-                        className="h-full flex flex-col shrink-0 overflow-y-auto custom-scrollbar pr-2"
-                    >
-                        <div className="space-y-6">
-                            <div>
-                    <h1 className="text-3xl font-bold mb-2">Resume Builder</h1>
-                    <p className="text-slate-400">Fill out your details to generate a professional resume.</p>
+        <div className="no-print" style={{ minHeight: '100%', color: '#fff' }}>
+            {/* ACTION BAR */}
+            <div style={actionBar}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '800' }}>Resume <span style={{ color: '#818cf8' }}>Builder</span></h2>
                 </div>
-
-                {/* Animated Tabs */}
-                <div className="relative flex rounded-xl bg-slate-900/60 p-1 mb-6 border border-slate-700/50">
-                    {/* Animated Background */}
-                    <div 
-                        className={`absolute top-1 bottom-1 w-[calc(33.333%-4px)] bg-slate-700 rounded-lg shadow transition-all duration-300 ease-out z-0 ${
-                            activeTab === 'personal' ? 'translate-x-0' : activeTab === 'experience' ? 'translate-x-[calc(100%+6px)]' : 'translate-x-[calc(200%+12px)]'
-                        }`}
-                        style={{ width: 'calc(33.333% - 2.66px)' }}
-                    />
-                    <button
-                        onClick={() => setActiveTab('personal')}
-                        className={`flex-1 py-2 relative z-10 rounded-lg text-sm font-semibold transition-colors duration-300 ${activeTab === 'personal' ? 'text-white' : 'text-slate-400 hover:text-slate-300'}`}
-                    >
-                        Personal Info
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('experience')}
-                        className={`flex-1 py-2 relative z-10 rounded-lg text-sm font-semibold transition-colors duration-300 ${activeTab === 'experience' ? 'text-white' : 'text-slate-400 hover:text-slate-300'}`}
-                    >
-                        Experience
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('skills')}
-                        className={`flex-1 py-2 relative z-10 rounded-lg text-sm font-semibold transition-colors duration-300 ${activeTab === 'skills' ? 'text-white' : 'text-slate-400 hover:text-slate-300'}`}
-                    >
-                        Skills
-                    </button>
-                </div>
-
-                <div className="space-y-4">
-                    {activeTab === 'personal' && (
-                    <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700">
-                        <h2 className="text-xl font-semibold mb-4 text-slate-200">Personal Information</h2>
-                        <div className="grid gap-4 sm:grid-cols-2">
-                            <div className="space-y-1">
-                                <label className="text-sm font-medium text-slate-400">Full Name</label>
-                                <input
-                                    type="text"
-                                    value={personalInfo.name}
-                                    onChange={e => setPersonalInfo({ ...personalInfo, name: e.target.value })}
-                                    className="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg focus:outline-none focus:border-blue-500 transition-colors"
-                                    placeholder="John Doe"
-                                />
-                            </div>
-                            <div className="space-y-1">
-                                <label className="text-sm font-medium text-slate-400">Email address</label>
-                                <input
-                                    type="email"
-                                    value={personalInfo.email}
-                                    onChange={e => setPersonalInfo({ ...personalInfo, email: e.target.value })}
-                                    className="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg focus:outline-none focus:border-blue-500 transition-colors"
-                                    placeholder="john@example.com"
-                                />
-                            </div>
-                            <div className="space-y-1 sm:col-span-2">
-                                <label className="text-sm font-medium text-slate-400">Phone Number</label>
-                                <input
-                                    type="tel"
-                                    value={personalInfo.phone}
-                                    onChange={e => setPersonalInfo({ ...personalInfo, phone: e.target.value })}
-                                    className="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg focus:outline-none focus:border-blue-500 transition-colors"
-                                    placeholder="+1 (555) 000-0000"
-                                />
-                            </div>
-                            <div className="space-y-1 sm:col-span-2">
-                                <label className="text-sm font-medium text-slate-400">Professional Summary</label>
-                                <textarea
-                                    rows={3}
-                                    value={personalInfo.summary}
-                                    onChange={e => setPersonalInfo({ ...personalInfo, summary: e.target.value })}
-                                    className="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg focus:outline-none focus:border-blue-500 transition-colors resize-none"
-                                    placeholder="A brief summary of your professional background and goals..."
-                                />
-                            </div>
-                        </div>
-                    </div>
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                    {saveStatus === 'saved' && (
+                        <span style={{ display: 'flex', alignItems: 'center', gap: '5px', color: '#34d399', fontSize: '12px', fontWeight: '600' }}>
+                            <CheckCircle2 size={14} /> Saved
+                        </span>
                     )}
+                    <button style={saveBtnStyle} onClick={saveResume} disabled={saveStatus === 'saving'}>
+                        {saveStatus === 'saving' ? <span className="resume-spin"><Save size={14} /></span> : <Save size={14} />}
+                        {saveStatus === 'saving' ? 'Saving...' : 'Save'}
+                    </button>
+                    <button style={downloadBtnStyle} onClick={handlePrint}>
+                        <Download size={14} /> Download PDF
+                    </button>
+                </div>
+            </div>
 
-                    {activeTab === 'experience' && (
-                    <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                        <div className="flex items-start justify-between mb-6">
-                            <div>
-                                <h2 className="text-xl font-semibold text-slate-200">Experience</h2>
-                                <p className="text-xs text-slate-400 mt-1 max-w-[200px] sm:max-w-xs">Add roles separately. Do not combine multiple jobs into one.</p>
-                            </div>
-                            <button onClick={handleAddExperience} className="text-blue-400 hover:text-blue-300 text-sm font-medium flex items-center gap-1 shrink-0 bg-blue-500/10 hover:bg-blue-500/20 px-3 py-1.5 rounded-lg transition-colors">
-                                <Plus className="h-4 w-4" /> Add Role
-                            </button>
+            <div style={layout}>
+                {/* === LEFT: EDITOR === */}
+                <aside style={sidebar}>
+                    {/* Personal Info */}
+                    {renderAccordion('personal', User, 'Personal Info', '#818cf8', <>
+                        <div style={gridTwo}>
+                            <StyledInput placeholder="Full Name" value={data.name} onChange={v => handleChange('name', v)} />
+                            <StyledInput placeholder="Target Role (e.g. Full Stack Dev)" value={data.role} onChange={v => handleChange('role', v)} />
                         </div>
-                        <div className="space-y-6">
-                            {experience.map((exp, index) => (
-                                <div key={index} className="space-y-4 relative pb-6 border-b border-slate-700 last:border-0 last:pb-0">
-                                    {index > 0 && (
-                                        <button
-                                            onClick={() => handleRemoveExperience(index)}
-                                            className="absolute top-0 right-0 p-1 text-slate-500 hover:text-red-400 focus:outline-none"
-                                        >
-                                            <Trash2 className="h-4 w-4" />
-                                        </button>
-                                    )}
-                                    <div className="grid gap-4 sm:grid-cols-2">
-                                        <div className="space-y-1">
-                                            <label className="text-sm font-medium text-slate-400">Company</label>
-                                            <input
-                                                type="text"
-                                                value={exp.company}
-                                                onChange={e => handleExpChange(index, 'company', e.target.value)}
-                                                className="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg focus:outline-none focus:border-blue-500 transition-colors"
-                                                placeholder="Tech Inc"
-                                            />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <label className="text-sm font-medium text-slate-400">Role</label>
-                                            <input
-                                                type="text"
-                                                value={exp.role}
-                                                onChange={e => handleExpChange(index, 'role', e.target.value)}
-                                                className="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg focus:outline-none focus:border-blue-500 transition-colors"
-                                                placeholder="Software Engineer"
-                                            />
-                                        </div>
-                                        <div className="space-y-1 sm:col-span-2">
-                                            <label className="text-sm font-medium text-slate-400">Duration</label>
-                                            <input
-                                                type="text"
-                                                value={exp.duration}
-                                                onChange={e => handleExpChange(index, 'duration', e.target.value)}
-                                                className="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg focus:outline-none focus:border-blue-500 transition-colors"
-                                                placeholder="Jan 2020 - Present"
-                                            />
-                                        </div>
-                                        <div className="space-y-1 sm:col-span-2">
-                                            <label className="text-sm font-medium text-slate-400">Description</label>
-                                            <textarea
-                                                rows={3}
-                                                value={exp.description}
-                                                onChange={e => handleExpChange(index, 'description', e.target.value)}
-                                                className="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg focus:outline-none focus:border-blue-500 transition-colors resize-none"
-                                                placeholder="Key responsibilities and achievements..."
-                                            />
-                                        </div>
-                                    </div>
+                        <div style={gridTwo}>
+                            <StyledInput placeholder="Email" value={data.email} onChange={v => handleChange('email', v)} icon={<Mail size={13} />} />
+                            <StyledInput placeholder="Phone" value={data.phone} onChange={v => handleChange('phone', v)} icon={<Phone size={13} />} />
+                        </div>
+                        <StyledInput placeholder="Location (e.g. Bhopal, India)" value={data.location} onChange={v => handleChange('location', v)} icon={<MapPin size={13} />} />
+                        <div style={gridTwo}>
+                            <StyledInput placeholder="LinkedIn URL" value={data.linkedin} onChange={v => handleChange('linkedin', v)} icon={<Link2 size={13} />} />
+                            <StyledInput placeholder="GitHub URL" value={data.github} onChange={v => handleChange('github', v)} icon={<GitBranch size={13} />} />
+                        </div>
+                        <StyledInput placeholder="Portfolio URL (optional)" value={data.portfolio} onChange={v => handleChange('portfolio', v)} icon={<Globe size={13} />} />
+                    </>)}
+
+                    {/* Summary */}
+                    {renderAccordion('summary', Code2, 'Professional Summary', '#34d399', <>
+                        <textarea
+                            style={{ ...inputBase, height: '90px', resize: 'vertical' }}
+                            placeholder="Write a compelling 2-3 line summary about yourself..."
+                            value={data.summary}
+                            onChange={e => handleChange('summary', e.target.value)}
+                        />
+                        <div style={{ textAlign: 'right', fontSize: '11px', color: '#64748b', marginTop: '4px' }}>
+                            {data.summary.length}/300 characters
+                        </div>
+                    </>)}
+
+                    {/* Experience */}
+                    {renderAccordion('experience', Briefcase, 'Work Experience', '#f59e0b', <>
+                        {data.experience.map((exp, i) => (
+                            <div key={i} style={itemCard}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                                    <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '700' }}>EXPERIENCE {i + 1}</span>
+                                    <Trash2 size={13} color="#ef4444" cursor="pointer" onClick={() => removeItem('experience', i)} />
                                 </div>
-                            ))}
-                        </div>
-                    </div>
-                    )}
-
-                    {activeTab === 'skills' && (
-                    <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                        <div className="mb-4">
-                            <h2 className="text-xl font-semibold text-slate-200">Skills</h2>
-                            <p className="text-xs text-slate-400 mt-1">To add multiple skills properly, separate them with a comma (e.g., JavaScript, React, UI Design).</p>
-                        </div>
-                        <div className="space-y-1">
-                            <label className="text-sm font-medium text-slate-400">Technical & Soft Skills</label>
-                            <input
-                                type="text"
-                                value={skills}
-                                onChange={e => setSkills(e.target.value)}
-                                className="w-full px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg focus:outline-none focus:border-blue-500 transition-colors"
-                                placeholder="React, Node.js, Project Management (comma separated)"
-                            />
-                        </div>
-                    </div>
-                    )}
-
-                    <div className="flex justify-between items-center pt-4">
-                        <div className="text-sm text-slate-500">
-                            {activeTab === 'personal' && 'Step 1 of 3: Start with your basic details'}
-                            {activeTab === 'experience' && 'Step 2 of 3: Add your work history'}
-                            {activeTab === 'skills' && 'Step 3 of 3: Highlight your expertise'}
-                        </div>
-                        <button
-                            onClick={handleSave}
-                            disabled={isSubmitting}
-                            className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold transition-all ${isSubmitting
-                                    ? 'bg-blue-600/50 text-white/50 cursor-not-allowed'
-                                    : 'bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-500/30 hover:-translate-y-0.5'
-                                }`}
-                        >
-                            <Maximize2 className="h-5 w-5" />
-                            {isSubmitting ? 'Loading...' : 'Full Preview'}
-                        </button>
-                    </div>
-                </div>
-              </div>
-            </motion.div>
-            )}
-            </AnimatePresence>
-
-            {/* Preview Section */}
-            <motion.div 
-                layout
-                transition={{ duration: 0.4, ease: 'easeInOut' }}
-                className={`h-full flex flex-col ${previewMode ? 'w-full max-w-5xl mx-auto' : 'w-1/2'}`}
-            >
-                <div className="flex items-center justify-between mb-4 shrink-0">
-                    <div className="flex items-center gap-2">
-                        <FileText className="h-6 w-6 text-slate-400" />
-                        <h2 className="text-xl font-semibold text-slate-200">Live Preview</h2>
-                    </div>
-                    <AnimatePresence>
-                        {previewMode && (
-                            <motion.div
-                                initial={{ opacity: 0, scale: 0.8 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                exit={{ opacity: 0, scale: 0.8 }}
-                                className="flex items-center gap-3"
-                            >
-                                <button
-                                    onClick={() => window.print()}
-                                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors border border-blue-500 shadow-lg"
-                                >
-                                    <Download className="h-4 w-4" />
-                                    Download PDF
-                                </button>
-                                <button
-                                    onClick={() => setPreviewMode(false)}
-                                    className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg transition-colors border border-slate-600 shadow-lg"
-                                >
-                                    <ArrowLeft className="h-4 w-4" />
-                                    Back to Editor
-                                </button>
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
-                </div>
-
-                <div className="flex-1 rounded-xl border border-slate-700/50 bg-slate-900/30 p-2 sm:p-4 md:p-8 overflow-y-auto custom-scrollbar relative">
-                    <motion.div 
-                        layout
-                        initial={false}
-                        animate={{ 
-                            scale: previewMode ? 1 : 0.95,
-                        }}
-                        transition={{ duration: 0.4 }}
-                        style={{ transformOrigin: 'top center' }}
-                        className="bg-white text-slate-900 p-8 rounded-lg shadow-2xl shrink-0 min-h-[1056px] w-[95%] sm:w-full max-w-[816px] mx-auto"
-                    >
-                        <div ref={personalRef} className="border-b-2 border-slate-800 pb-6 mb-6 pt-4 scroll-mt-8">
-                        <h1 className="text-4xl font-bold uppercase tracking-tight mb-2">
-                            {personalInfo.name || 'YOUR NAME'}
-                        </h1>
-                        <div className="flex flex-wrap gap-4 text-sm text-slate-600">
-                            {personalInfo.email && <span>{personalInfo.email}</span>}
-                            {personalInfo.phone && <span>{personalInfo.phone}</span>}
-                        </div>
-                    </div>
-
-                    {personalInfo.summary && (
-                        <div className="mb-6">
-                            <p className="text-sm leading-relaxed">{personalInfo.summary}</p>
-                        </div>
-                    )}
-
-                    {(activeTab === 'experience' || (experience.length > 0 && (experience[0].company || experience[0].role))) && (
-                        <div ref={expRef} className="mb-6 scroll-mt-12 transition-all duration-300">
-                            <h2 className="text-lg font-bold uppercase tracking-wider mb-3 text-slate-800">Experience</h2>
-                            {!(experience.length > 0 && (experience[0].company || experience[0].role)) && (
-                                <div className="text-slate-400 italic text-sm mb-4">Start typing in the editor to see your experience here...</div>
-                            )}
-                            <div className="space-y-4">
-                                {experience.map((exp, idx) => (
-                                    (exp.company || exp.role) ? (
-                                        <div key={idx}>
-                                            <div className="flex justify-between items-baseline mb-1">
-                                                <h3 className="font-bold text-slate-800">{exp.role || 'Role'}</h3>
-                                                <span className="text-sm text-slate-500">{exp.duration || 'Duration'}</span>
-                                            </div>
-                                            <p className="text-sm font-medium text-blue-600 mb-2">{exp.company || 'Company'}</p>
-                                            <p className="text-sm text-slate-600 whitespace-pre-line">{exp.description}</p>
+                                <div style={gridTwo}>
+                                    <StyledInput placeholder="Company" value={exp.company} onChange={v => handleListChange('experience', i, 'company', v)} />
+                                    <StyledInput placeholder="Role / Title" value={exp.role} onChange={v => handleListChange('experience', i, 'role', v)} />
+                                </div>
+                                <StyledInput placeholder="Duration (e.g. Jan 2025 - Present)" value={exp.duration} onChange={v => handleListChange('experience', i, 'duration', v)} />
+                                <div style={{ marginTop: '8px' }}>
+                                    <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '600' }}>Bullet Points</span>
+                                    {exp.bullets.map((bullet, bi) => (
+                                        <div key={bi} style={{ display: 'flex', gap: '6px', marginTop: '6px' }}>
+                                            <span style={{ color: '#6366f1', marginTop: '10px', fontSize: '10px' }}>•</span>
+                                            <input
+                                                style={{ ...inputBase, flex: 1 }}
+                                                placeholder="Describe an achievement..."
+                                                value={bullet}
+                                                onChange={e => handleBulletChange(i, bi, e.target.value)}
+                                            />
+                                            <Trash2 size={12} color="#ef4444" cursor="pointer" style={{ marginTop: '10px' }} onClick={() => removeBullet(i, bi)} />
                                         </div>
-                                    ) : null
-                                ))}
+                                    ))}
+                                    <button style={addSmallBtn} onClick={() => addBullet(i)}>+ Add Bullet</button>
+                                </div>
                             </div>
-                        </div>
-                    )}
+                        ))}
+                        <button style={addItemBtn} onClick={() => addItem('experience', { company: '', role: '', duration: '', bullets: [''] })}>
+                            <Plus size={14} /> Add Experience
+                        </button>
+                    </>)}
 
-                    {(activeTab === 'skills' || skills) && (
-                        <div ref={skillsRef} className="scroll-mt-12 transition-all duration-300">
-                            <h2 className="text-lg font-bold uppercase tracking-wider mb-3 text-slate-800">Skills</h2>
-                            {!skills && (
-                                <div className="text-slate-400 italic text-sm">Start typing in the editor to see your skills here...</div>
-                            )}
-                            <div className="flex flex-wrap gap-2">
-                                {skills.split(',').map((skill, idx) => (
-                                    skill.trim() && (
-                                        <span key={idx} className="px-3 py-1 bg-slate-100 text-slate-700 rounded-full text-xs font-medium">
-                                            {skill.trim()}
-                                        </span>
-                                    )
-                                ))}
+                    {/* Projects */}
+                    {renderAccordion('projects', FolderGit2, 'Projects', '#ec4899', <>
+                        {data.projects.map((proj, i) => (
+                            <div key={i} style={itemCard}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                                    <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '700' }}>PROJECT {i + 1}</span>
+                                    <Trash2 size={13} color="#ef4444" cursor="pointer" onClick={() => removeItem('projects', i)} />
+                                </div>
+                                <div style={gridTwo}>
+                                    <StyledInput placeholder="Project Title" value={proj.title} onChange={v => handleListChange('projects', i, 'title', v)} />
+                                    <StyledInput placeholder="Tech Stack (React, Node...)" value={proj.tech} onChange={v => handleListChange('projects', i, 'tech', v)} />
+                                </div>
+                                <div style={gridTwo}>
+                                    <StyledInput placeholder="GitHub Link" value={proj.github} onChange={v => handleListChange('projects', i, 'github', v)} />
+                                    <StyledInput placeholder="Live Demo URL" value={proj.live} onChange={v => handleListChange('projects', i, 'live', v)} />
+                                </div>
+                                <textarea
+                                    style={{ ...inputBase, height: '60px', resize: 'vertical' }}
+                                    placeholder="Short description of the project..."
+                                    value={proj.desc}
+                                    onChange={e => handleListChange('projects', i, 'desc', e.target.value)}
+                                />
                             </div>
-                        </div>
-                    )}
-                    </motion.div>
-                </div>
-            </motion.div>
+                        ))}
+                        <button style={addItemBtn} onClick={() => addItem('projects', { title: '', tech: '', github: '', live: '', desc: '' })}>
+                            <Plus size={14} /> Add Project
+                        </button>
+                    </>)}
+
+                    {/* Education */}
+                    {renderAccordion('education', GraduationCap, 'Education', '#06b6d4', <>
+                        {data.education.map((edu, i) => (
+                            <div key={i} style={itemCard}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                                    <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '700' }}>EDUCATION {i + 1}</span>
+                                    <Trash2 size={13} color="#ef4444" cursor="pointer" onClick={() => removeItem('education', i)} />
+                                </div>
+                                <div style={gridTwo}>
+                                    <StyledInput placeholder="Degree (B.Tech CS)" value={edu.degree} onChange={v => handleListChange('education', i, 'degree', v)} />
+                                    <StyledInput placeholder="Institute" value={edu.institute} onChange={v => handleListChange('education', i, 'institute', v)} />
+                                </div>
+                                <div style={gridTwo}>
+                                    <StyledInput placeholder="Starting Year (e.g. 2022)" value={edu.startYear} onChange={v => handleListChange('education', i, 'startYear', v)} />
+                                    <StyledInput placeholder="Passing Year (e.g. 2026)" value={edu.endYear} onChange={v => handleListChange('education', i, 'endYear', v)} />
+                                </div>
+                                <div style={gridTwo}>
+                                    <StyledInput placeholder="GPA (optional)" value={edu.gpa} onChange={v => handleListChange('education', i, 'gpa', v)} />
+                                    <div />
+                                </div>
+                            </div>
+                        ))}
+                        <button style={addItemBtn} onClick={() => addItem('education', { degree: '', institute: '', startYear: '', endYear: '', gpa: '' })}>
+                            <Plus size={14} /> Add Education
+                        </button>
+                    </>)}
+
+                    {/* Skills */}
+                    {renderAccordion('skills', Code2, 'Skills', '#8b5cf6', <>
+                        {data.skills.map((skill, i) => (
+                            <div key={i} style={{ ...itemCard, padding: '10px 12px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                                    <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '700' }}>SKILL GROUP {i + 1}</span>
+                                    <Trash2 size={12} color="#ef4444" cursor="pointer" onClick={() => removeSkill(i)} />
+                                </div>
+                                <div style={gridTwo}>
+                                    <input
+                                        style={{ ...inputBase, fontWeight: '700', color: '#818cf8' }}
+                                        placeholder="Category (e.g. Languages, Tools...)"
+                                        value={skill.label}
+                                        onChange={e => handleSkillChange(i, 'label', e.target.value)}
+                                    />
+                                    <input
+                                        style={inputBase}
+                                        placeholder="Skills (e.g. Python, Java, SQL...)"
+                                        value={skill.value}
+                                        onChange={e => handleSkillChange(i, 'value', e.target.value)}
+                                    />
+                                </div>
+                            </div>
+                        ))}
+                        <button style={addItemBtn} onClick={addSkill}>
+                            <Plus size={14} /> Add Skill Category
+                        </button>
+                    </>)}
+
+                    {/* Certifications */}
+                    {renderAccordion('certifications', Award, 'Certifications', '#f97316', <>
+                        {data.certifications.map((cert, i) => (
+                            <div key={i} style={itemCard}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                    <span style={{ fontSize: '11px', color: '#64748b', fontWeight: '700' }}>CERT {i + 1}</span>
+                                    <Trash2 size={13} color="#ef4444" cursor="pointer" onClick={() => removeItem('certifications', i)} />
+                                </div>
+                                <StyledInput placeholder="Certification Title" value={cert.title} onChange={v => handleListChange('certifications', i, 'title', v)} />
+                                <div style={gridTwo}>
+                                    <StyledInput placeholder="Issuer (Google, AWS...)" value={cert.issuer} onChange={v => handleListChange('certifications', i, 'issuer', v)} />
+                                    <StyledInput placeholder="Year" value={cert.year} onChange={v => handleListChange('certifications', i, 'year', v)} />
+                                </div>
+                            </div>
+                        ))}
+                        <button style={addItemBtn} onClick={() => addItem('certifications', { title: '', issuer: '', year: '' })}>
+                            <Plus size={14} /> Add Certification
+                        </button>
+                    </>)}
+                </aside>
+
+                {/* === RIGHT: LIVE A4 PREVIEW === */}
+                <main style={previewArea}>
+                    <div id="resume-root" className="print-area" style={paper}>
+                        {/* HEADER */}
+                        <header style={pHeader}>
+                            <h1 style={pName}>{data.name || 'Your Name'}</h1>
+                            <p style={pRole}>{data.role || 'Your Target Role'}</p>
+                            <div style={pContactRow}>
+                                {data.email && <span>{data.email}</span>}
+                                {data.phone && <span>• {data.phone}</span>}
+                                {data.location && <span>• {data.location}</span>}
+                            </div>
+                            <div style={pContactRow}>
+                                {data.linkedin && <span style={{ color: '#6366f1' }}>LinkedIn: {data.linkedin}</span>}
+                                {data.github && <span style={{ color: '#6366f1' }}>• GitHub: {data.github}</span>}
+                                {data.portfolio && <span style={{ color: '#6366f1' }}>• {data.portfolio}</span>}
+                            </div>
+                        </header>
+
+                        {/* SUMMARY */}
+                        {data.summary && (
+                            <PreviewSection title="PROFESSIONAL SUMMARY">
+                                <p style={pText}>{data.summary}</p>
+                            </PreviewSection>
+                        )}
+
+                        {/* SKILLS */}
+                        {data.skills.some(s => s.label.trim() || s.value.trim()) && (
+                            <PreviewSection title="SKILLS">
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                    {data.skills.filter(s => s.label || s.value).map((skill, i) => (
+                                        <div key={i} style={skillRow}>
+                                            {skill.label && <b style={skillLabel}>{skill.label}:</b>} {skill.value}
+                                        </div>
+                                    ))}
+                                </div>
+                            </PreviewSection>
+                        )}
+
+                        {/* EXPERIENCE */}
+                        {data.experience.some(e => e.company || e.role) && (
+                            <PreviewSection title="WORK EXPERIENCE">
+                                {data.experience.filter(e => e.company || e.role).map((exp, i) => (
+                                    <div key={i} style={{ marginBottom: '14px' }}>
+                                        <div style={pFlexBetween}>
+                                            <b style={{ fontSize: '14px', color: '#0f172a' }}>{exp.company}</b>
+                                            <span style={{ fontSize: '12px', color: '#64748b' }}>{exp.duration}</span>
+                                        </div>
+                                        <div style={{ color: '#6366f1', fontSize: '13px', fontWeight: '600', marginBottom: '4px' }}>{exp.role}</div>
+                                        <ul style={{ margin: 0, paddingLeft: '16px' }}>
+                                            {exp.bullets.filter(b => b.trim()).map((b, bi) => (
+                                                <li key={bi} style={pText}>{b}</li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                ))}
+                            </PreviewSection>
+                        )}
+
+                        {/* PROJECTS */}
+                        {data.projects.some(p => p.title) && (
+                            <PreviewSection title="PROJECTS">
+                                {data.projects.filter(p => p.title).map((proj, i) => (
+                                    <div key={i} style={{ marginBottom: '14px' }}>
+                                        <div style={pFlexBetween}>
+                                            <b style={{ fontSize: '14px', color: '#0f172a' }}>{proj.title}</b>
+                                            <span style={{ fontSize: '11px', color: '#64748b' }}>{proj.github || proj.live}</span>
+                                        </div>
+                                        <div style={{ fontSize: '12px', fontStyle: 'italic', color: '#6366f1', marginBottom: '2px' }}>Tech: {proj.tech}</div>
+                                        <p style={pText}>{proj.desc}</p>
+                                    </div>
+                                ))}
+                            </PreviewSection>
+                        )}
+
+                        {/* EDUCATION */}
+                        {data.education.some(e => e.degree || e.institute) && (
+                            <PreviewSection title="EDUCATION">
+                                {data.education.filter(e => e.degree || e.institute).map((edu, i) => (
+                                    <div key={i} style={{ ...pFlexBetween, marginBottom: '8px' }}>
+                                        <div>
+                                            <b style={{ fontSize: '14px', color: '#0f172a' }}>{edu.institute}</b>
+                                            <div style={{ fontSize: '13px', color: '#475569' }}>{edu.degree}{edu.gpa ? ` | GPA: ${edu.gpa}` : ''}</div>
+                                        </div>
+                                        <span style={{ fontSize: '12px', color: '#64748b' }}>{edu.startYear} {edu.startYear && edu.endYear ? '-' : ''} {edu.endYear}</span>
+                                    </div>
+                                ))}
+                            </PreviewSection>
+                        )}
+
+                        {/* CERTIFICATIONS */}
+                        {data.certifications.some(c => c.title) && (
+                            <PreviewSection title="CERTIFICATIONS">
+                                {data.certifications.filter(c => c.title).map((cert, i) => (
+                                    <div key={i} style={{ ...pFlexBetween, marginBottom: '6px' }}>
+                                        <span style={{ fontSize: '13px' }}><b>{cert.title}</b> — {cert.issuer}</span>
+                                        <span style={{ fontSize: '12px', color: '#64748b' }}>{cert.year}</span>
+                                    </div>
+                                ))}
+                            </PreviewSection>
+                        )}
+                    </div>
+                </main>
+            </div>
+
+            {/* PRINT CSS + Animations */}
+            <style>{`
+                @keyframes resumeSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+                .resume-spin { animation: resumeSpin 1s linear infinite; display: inline-flex; }
+                @media print {
+                    @page { size: A4; margin: 0; }
+                    .no-print { display: none !important; }
+                    .print-area {
+                        display: block !important;
+                        position: absolute !important;
+                        left: 0 !important; top: 0 !important;
+                        width: 210mm !important;
+                        min-height: 297mm !important;
+                        margin: 0 !important;
+                        padding: 45px 50px !important;
+                        box-shadow: none !important;
+                        background: white !important;
+                        color: #1e293b !important;
+                        z-index: 9999;
+                    }
+                    body { background: white !important; }
+                }
+            `}</style>
         </div>
     );
 }
+
+// --- Reusable Input Component ---
+const StyledInput = ({ placeholder, value, onChange, icon }: {
+    placeholder: string; value: string; onChange: (v: string) => void; icon?: React.ReactNode;
+}) => (
+    <div style={{ position: 'relative', marginBottom: '8px' }}>
+        {icon && <div style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#475569' }}>{icon}</div>}
+        <input
+            style={{ ...inputBase, paddingLeft: icon ? '32px' : '12px' }}
+            placeholder={placeholder}
+            value={value}
+            onChange={e => onChange(e.target.value)}
+        />
+    </div>
+);
+
+// --- Preview Section Component ---
+const PreviewSection = ({ title, children }: { title: string; children: React.ReactNode }) => (
+    <div style={{ marginTop: '20px' }}>
+        <h5 style={pSectionTitle}>{title}</h5>
+        {children}
+    </div>
+);
+
+// ===========================================
+//                 STYLES
+// ===========================================
+
+const layout: React.CSSProperties = { display: 'grid', gridTemplateColumns: '420px 1fr', height: 'calc(100vh - 130px)' };
+
+const sidebar: React.CSSProperties = { background: '#0f172a', padding: '20px', overflowY: 'auto', borderRight: '1px solid #1e293b' };
+const previewArea: React.CSSProperties = { background: '#1e293b', padding: '30px', overflowY: 'auto', display: 'flex', justifyContent: 'center', alignItems: 'flex-start' };
+
+const actionBar: React.CSSProperties = {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    padding: '12px 30px',
+    background: 'rgba(15,23,42,0.95)', backdropFilter: 'blur(10px)',
+    borderBottom: '1px solid #1e293b'
+};
+
+const saveBtnStyle: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: '6px',
+    background: 'rgba(52,211,153,0.1)', color: '#34d399',
+    border: '1px solid rgba(52,211,153,0.3)',
+    padding: '8px 16px', borderRadius: '8px',
+    cursor: 'pointer', fontSize: '12px', fontWeight: '700'
+};
+const downloadBtnStyle: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: '6px',
+    background: '#6366f1', color: '#fff', border: 'none',
+    padding: '8px 16px', borderRadius: '8px',
+    cursor: 'pointer', fontSize: '12px', fontWeight: '700',
+    boxShadow: '0 4px 12px rgba(99,102,241,0.3)'
+};
+
+const inputBase: React.CSSProperties = {
+    width: '100%', background: '#1e293b', border: '1px solid #334155',
+    padding: '9px 12px', borderRadius: '8px', color: '#fff',
+    fontSize: '13px', outline: 'none', boxSizing: 'border-box'
+};
+
+const gridTwo: React.CSSProperties = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' };
+
+const accordionBox: React.CSSProperties = {
+    background: 'rgba(255,255,255,0.02)',
+    borderRadius: '16px', border: '1px solid #1e293b',
+    marginBottom: '12px', overflow: 'hidden'
+};
+const accordionHeader: React.CSSProperties = {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    padding: '14px 16px', cursor: 'pointer',
+    background: 'rgba(255,255,255,0.02)'
+};
+const accordionIconBox: React.CSSProperties = {
+    width: '30px', height: '30px', borderRadius: '8px',
+    display: 'flex', alignItems: 'center', justifyContent: 'center'
+};
+const accordionBody: React.CSSProperties = { padding: '12px 16px 16px' };
+
+const itemCard: React.CSSProperties = {
+    background: 'rgba(255,255,255,0.02)', padding: '14px',
+    borderRadius: '12px', border: '1px solid rgba(255,255,255,0.04)',
+    marginBottom: '10px'
+};
+
+const addItemBtn: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+    width: '100%', padding: '10px', marginTop: '8px',
+    background: 'rgba(99,102,241,0.05)', color: '#818cf8',
+    border: '1px dashed rgba(99,102,241,0.3)',
+    borderRadius: '10px', cursor: 'pointer', fontSize: '12px', fontWeight: '600'
+};
+
+const addSmallBtn: React.CSSProperties = {
+    background: 'transparent', border: 'none', color: '#818cf8',
+    cursor: 'pointer', fontSize: '11px', fontWeight: '600', marginTop: '6px', padding: '2px 0'
+};
+
+// Paper (A4 Preview) Styles
+const paper: React.CSSProperties = {
+    width: '210mm', minHeight: '297mm',
+    background: '#fff', padding: '45px 50px',
+    color: '#334155', fontFamily: "'Inter','Plus Jakarta Sans',sans-serif",
+    boxShadow: '0 25px 60px rgba(0,0,0,0.5)',
+    borderRadius: '4px'
+};
+
+const pHeader: React.CSSProperties = { textAlign: 'center', borderBottom: '2.5px solid #1e293b', paddingBottom: '16px' };
+const pName: React.CSSProperties = { margin: 0, color: '#0f172a', fontSize: '32px', letterSpacing: '-1px', fontWeight: '800' };
+const pRole: React.CSSProperties = { color: '#6366f1', fontWeight: '700', fontSize: '15px', textTransform: 'uppercase', letterSpacing: '2px', marginTop: '4px', marginBottom: '0' };
+const pContactRow: React.CSSProperties = { fontSize: '11px', color: '#64748b', marginTop: '6px', display: 'flex', justifyContent: 'center', gap: '8px', flexWrap: 'wrap' };
+
+const pSectionTitle: React.CSSProperties = {
+    fontSize: '11px', color: '#0f172a', fontWeight: '800',
+    borderBottom: '1.5px solid #e2e8f0', paddingBottom: '4px',
+    marginBottom: '10px', letterSpacing: '1.5px', textTransform: 'uppercase'
+};
+const pText: React.CSSProperties = { fontSize: '12.5px', lineHeight: '1.6', margin: '0 0 2px 0', color: '#475569' };
+const pFlexBetween: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center' };
+const skillRow: React.CSSProperties = { fontSize: '12.5px', lineHeight: '1.8', color: '#475569' };
+const skillLabel: React.CSSProperties = { color: '#0f172a', fontSize: '12.5px' };

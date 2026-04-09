@@ -42,6 +42,16 @@ export interface TimelineSyncResponse {
     summary: Record<string, number>;
 }
 
+export interface ATSAnalysisResult {
+    atsScore: number;
+    sectionScores?: Record<string, number>;
+    foundKeywords?: string[];
+    missingKeywords?: string[];
+    recommendations?: string[];
+    strengths?: string[];
+    verdict?: string;
+}
+
 export const analyzeResume = async (file: File, targetRole: string, userId: string): Promise<any> => {
     const formData = new FormData();
     formData.append('file', file);
@@ -56,8 +66,22 @@ export const analyzeResume = async (file: File, targetRole: string, userId: stri
         },
     });
 
-    // We map the backend response structure to the frontend ResumeResult structure 
-    // depending on the exact shape, but for now we'll pass the whole data through.
+    return data;
+};
+
+/** Analyzes pasted resume text for ATS scoring (new detailed analysis) */
+export const analyzeResumeText = async (
+    resumeText: string,
+    targetRole: string,
+    userId: string,
+    targetCompany?: string
+): Promise<ATSAnalysisResult> => {
+    const { data } = await apiClient.post('/resume/analyze-text', {
+        resume_text: resumeText,
+        target_role: targetRole,
+        target_company: targetCompany || '',
+        user_id: userId,
+    });
     return data;
 };
 

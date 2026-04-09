@@ -4,6 +4,7 @@ import json
 import fitz  # PyMuPDF
 import docx  # python-docx
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from pydantic import BaseModel
 from typing import Optional
 from supabase import create_client, Client
 from dotenv import load_dotenv
@@ -165,6 +166,109 @@ async def get_resume_history(user_id: str):
         return {"status": "success", "user_id": user_id, "evaluations": response.data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching history: {str(e)}")
+
+
+class AnalyzeTextRequest(BaseModel):
+    resume_text: str
+    target_role: str
+    target_company: Optional[str] = ""
+    user_id: str
+
+@router.post("/analyze-text")
+async def analyze_resume_text(req: AnalyzeTextRequest):
+    """
+    Analyzes pasted resume text and returns detailed ATS analysis.
+    Returns: atsScore, sectionScores, foundKeywords, missingKeywords, recommendations, strengths, verdict
+    """
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase is not configured on this server.")
+    if not _groq_key:
+        raise HTTPException(status_code=503, detail="GROQ_API_KEY is not configured on this server.")
+
+    resume_text = req.resume_text.strip()
+    if len(resume_text) < 50:
+        raise HTTPException(status_code=400, detail="Resume text is too short. Please provide a complete resume (at least 50 characters).")
+
+    try:
+        target_role = req.target_role or "Software Developer"
+        company_context = f" at {req.target_company}" if req.target_company else ""
+
+        prompt = f"""
+        You are an expert ATS (Applicant Tracking System) scanner and professional career counselor.
+        
+        Analyze this resume for a "{target_role}"{company_context} role:
+        
+        ---BEGIN RESUME---
+        {resume_text[:5000]}
+        ---END RESUME---
+        
+        Respond ONLY with a valid JSON object (no markdown, no backticks, no explanation) in this EXACT format:
+        {{
+          "atsScore": (number 0-100, be realistic and strict),
+          "sectionScores": {{
+            "contactInfo": (number 0-100),
+            "summary": (number 0-100),
+            "experience": (number 0-100),
+            "skills": (number 0-100),
+            "education": (number 0-100),
+            "formatting": (number 0-100)
+          }},
+          "foundKeywords": ["list of relevant keywords found in resume, max 10"],
+          "missingKeywords": ["list of important missing keywords for this role, max 8"],
+          "recommendations": [
+            "5 specific, actionable recommendations to improve the resume"
+          ],
+          "strengths": [
+            "3 things the resume does well"
+          ],
+          "verdict": "A 2-sentence professional verdict on the candidate's fit for the target role"
+        }}
+
+        Rules:
+        - Be brutally honest with scores. Average resumes should score 40-65, not 80+.
+        - Keywords should be specific to the "{target_role}" role.
+        - Recommendations should be concrete and actionable, not generic.
+        - Strengths should highlight what the candidate already does well.
+        """
+
+        completion = await openai_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": "You are a precise AI career counselor. You MUST output ONLY raw JSON. No markdown, no formatting, no conversational text."},
+                {"role": "user", "content": prompt}
+            ],
+            response_format={"type": "json_object"}
+        )
+
+        raw_content = completion.choices[0].message.content.strip()
+        if raw_content.startswith("```json"):
+            raw_content = raw_content[7:]
+        elif raw_content.startswith("```"):
+            raw_content = raw_content[3:]
+        if raw_content.endswith("```"):
+            raw_content = raw_content[:-3]
+        raw_content = raw_content.strip()
+
+        try:
+            ai_analysis = json.loads(raw_content)
+            print(f"--- ANALYZE-TEXT RAW OUTPUT ---\n{raw_content}\n---------------------")
+        except json.JSONDecodeError:
+            print(f"--- ANALYZE-TEXT RAW OUTPUT (INVALID) ---\n{raw_content}\n---------------------")
+            raise HTTPException(status_code=500, detail="AI returned invalid format. Please try again.")
+
+        # Save to Supabase
+        supabase.table("resume_evaluations").insert({
+            "user_id": req.user_id,
+            "filename": "pasted_text",
+            "analysis_result": ai_analysis
+        }).execute()
+
+        return ai_analysis
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Resume analysis failed: {str(e)}")
 
 
 @router.post("/parse")
