@@ -112,7 +112,8 @@ async def process_video_eye_contact(
     - Emits state changes to keep output small
     """
     if mp is None:
-        raise RuntimeError("MediaPipe is not installed. Run: pip install mediapipe")
+        print("WARNING: MediaPipe or OpenCV failed to load (likely missing OS packages like libGL natively on Render). Skipping video eye contact analysis.")
+        return []
 
     suffix = "." + filename.rsplit(".", 1)[-1] if "." in filename else ".webm"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
