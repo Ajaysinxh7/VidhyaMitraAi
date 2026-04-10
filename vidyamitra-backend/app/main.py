@@ -9,9 +9,14 @@ from .routers import resume, evaluate, quiz, interview, jobs, progress, auth, ro
 from .routers.interview_pipeline import router as interview_pipeline_router
 
 app: FastAPI = FastAPI(title=settings.PROJECT_NAME, version=settings.VERSION)
+origins = [
+    "http://localhost:5173",
+    "https://vidhyamitraai.vercel.app"
+]
+
 app.add_middleware(
-    middleware_class=CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    CORSMiddleware,
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
