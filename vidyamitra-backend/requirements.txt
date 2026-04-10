@@ -12,5 +12,5 @@ python-docx==1.1.0
 openai>=1.13.3
 groq>=0.18.0
 supabase>=2.3.0
-mediapipe==0.10.14
+mediapipe>=0.10.30
 opencv-python-headless==4.11.0.86
