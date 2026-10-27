@@ -247,7 +247,7 @@ Output schema:
 """
 
     completion = await openai_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
         messages=[
             {
                 "role": "system",
@@ -726,7 +726,7 @@ Return strictly valid JSON (keep text fields concise, max 3-4 sentences each):
 
         try:
             resp = await openai_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model="openai/gpt-oss-120b",
                 messages=[
                     {
                         "role": "system",
@@ -861,7 +861,7 @@ Schema:
 
     try:
         summary_resp = await openai_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             messages=[
                 {
                     "role": "system",

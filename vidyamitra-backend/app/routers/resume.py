@@ -98,7 +98,7 @@ async def upload_resume(
         # 4. Call the AI
         completion = await openai_client.chat.completions.create(
             # Make sure you are using a current Groq model like this one:
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             messages=[
                 {"role": "system", "content": "You are a precise AI, career counselor AI. You MUST output ONLY raw JSON. No markdown, no formatting, no conversational text."},
                 {"role": "user", "content": prompt}
@@ -232,7 +232,7 @@ async def analyze_resume_text(req: AnalyzeTextRequest):
         """
 
         completion = await openai_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             messages=[
                 {"role": "system", "content": "You are a precise AI career counselor. You MUST output ONLY raw JSON. No markdown, no formatting, no conversational text."},
                 {"role": "user", "content": prompt}
@@ -346,7 +346,7 @@ Rules:
 
         # 4. Call AI
         completion = await openai_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             messages=[
                 {"role": "system", "content": "You are an expert resume parser. You extract structured data from resumes and return ONLY valid JSON. No markdown, no conversational text."},
                 {"role": "user", "content": prompt}

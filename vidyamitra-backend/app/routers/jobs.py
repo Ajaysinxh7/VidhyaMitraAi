@@ -112,7 +112,7 @@ async def match_resume_to_job(request: JobMatchRequest):
         """
 
         completion = await openai_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="openai/gpt-oss-120b",
             messages=[
                 {"role": "system", "content": "You are a precise, JSON-outputting ATS AI. You MUST output ONLY raw JSON. No markdown, no formatting, no conversational text."},
                 {"role": "user", "content": prompt}
