@@ -49,3 +49,7 @@ check_quiz*.py
 traceback.txt
 out.txt
 tsc_out.txt
+
+# Test files and configs
+vidyamitra-frontend/src/__tests__/
+vidyamitra-frontend/vitest.config.ts

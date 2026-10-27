@@ -261,6 +261,17 @@ async def get_interview_history(user_id: str):
             session for session in local_store.values() 
             if session.get("user_id") == user_id
         ]
+
+        # Also grab completed pipeline sessions
+        pipeline_store_path = Path(os.getenv("INTERVIEW_PIPELINE_STORE_PATH", str(Path(tempfile.gettempdir()) / "_interview_pipeline_store.json")))
+        if pipeline_store_path.exists():
+            try:
+                pipeline_data = json.loads(pipeline_store_path.read_text(encoding="utf-8"))
+                for s in pipeline_data.values():
+                    if str(s.get("user_id")) == str(user_id):
+                        local_history.append(s)
+            except Exception:
+                pass
         
         # Merge, preferring DB ones if there's an ID collision
         db_ids = {s.get("id") for s in db_history}

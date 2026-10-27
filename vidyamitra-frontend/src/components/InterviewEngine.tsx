@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, AlertTriangle, Volume2, Sparkles } from 'lucide-react';
+import { Loader2, AlertTriangle, Volume2, Sparkles, History, ArrowLeft, Award, Calendar, RotateCcw } from 'lucide-react';
 
 import { useAppContext } from '../contexts/AppContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -14,8 +14,14 @@ import WebcamMonitor from './WebcamMonitor';
 import type { RecordingResult } from '../hooks/useMediaRecorder';
 import ResumeUploader from './ResumeUploader';
 import type { ParsedResumeData } from '../services/api';
+import type {
+  ActiveInterviewSession,
+  CompletedInterviewSession,
+  InterviewQuestionItem,
+  AnswerWindowMsItem,
+} from '../contexts/AppContext';
 
-type PipelineState =
+export type PipelineState =
   | 'loading_resume'
   | 'generating_questions'
   | 'ready'
@@ -26,19 +32,10 @@ type PipelineState =
   | 'reviewing'
   | 'error';
 
-type InterviewQuestion = {
-  id: string;
-  text: string;
-  category: string;
-};
+export type InterviewQuestion = InterviewQuestionItem;
+export type AnswerWindowMs = AnswerWindowMsItem;
 
-type AnswerWindowMs = {
-  question_id: string;
-  startMs: number | null;
-  endMs: number | null;
-};
-
-type InterviewReport = {
+export type InterviewReport = {
   timeline: any[];
   per_question_feedback?: any[];
   technical_score?: number;
@@ -80,8 +77,19 @@ function speakQuestion(text: string) {
 }
 
 export default function InterviewEngine() {
-  const { parsedResume, setParsedResume } = useAppContext();
+  const {
+    parsedResume,
+    setParsedResume,
+    clearActiveResume,
+    activeInterviewSession,
+    setActiveInterviewSession,
+    clearActiveInterviewSession,
+    completedInterviews,
+    saveCompletedInterview,
+  } = useAppContext();
+
   const { user } = useAuth();
+  const userId = user?.id ?? null;
 
   const [state, setState] = useState<PipelineState>('loading_resume');
   const [questions, setQuestions] = useState<InterviewQuestion[]>([]);
@@ -96,10 +104,35 @@ export default function InterviewEngine() {
 
   const [error, setError] = useState<string | null>(null);
 
-  const isRecordingActive = state === 'recording';
-  const userId = user?.id ?? null;
+  // History inspection state
+  const [isViewingHistory, setIsViewingHistory] = useState(false);
+  const [selectedHistoricalSession, setSelectedHistoricalSession] = useState<CompletedInterviewSession | null>(null);
+  const [resumedBannerVisible, setResumedBannerVisible] = useState(false);
 
+  // Guard against double-firing and stale responses
+  const isGeneratingRef = useRef(false);
+  const generationRequestIdRef = useRef(0);
+
+  const isRecordingActive = state === 'recording';
   const currentQuestion = questions[currentIdx];
+
+  // Restore unfinished session on mount if one exists
+  useEffect(() => {
+    if (
+      activeInterviewSession &&
+      (activeInterviewSession.status === 'in_progress' || activeInterviewSession.status === 'evaluating') &&
+      activeInterviewSession.questions &&
+      activeInterviewSession.questions.length > 0
+    ) {
+      console.log('[InterviewEngine] Restoring unfinished interview session:', activeInterviewSession.sessionId);
+      setSessionId(activeInterviewSession.sessionId);
+      setQuestions(activeInterviewSession.questions);
+      setCurrentIdx(activeInterviewSession.currentIdx || 0);
+      setAnswerWindows(activeInterviewSession.answerWindows || []);
+      setState(activeInterviewSession.status === 'evaluating' ? 'analyzing' : 'ready');
+      setResumedBannerVisible(true);
+    }
+  }, []); // Run once on mount
 
   const canStartAnswer = useMemo(() => {
     if (!currentQuestion) return false;
@@ -121,9 +154,6 @@ export default function InterviewEngine() {
     return !!w && w.startMs !== null && w.endMs !== null;
   }, [answerWindows, currentQuestion]);
 
-  // Ref guard to prevent double-firing of question generation
-  const isGeneratingRef = useRef(false);
-
   const generateQuestions = async (resumeData: ParsedResumeData, uid: string) => {
     // Prevent double invocation
     if (isGeneratingRef.current) {
@@ -131,10 +161,12 @@ export default function InterviewEngine() {
       return;
     }
     isGeneratingRef.current = true;
+    const reqId = ++generationRequestIdRef.current;
 
     console.log('[InterviewEngine] generateQuestions called. userId:', uid);
     setState('generating_questions');
     setError(null);
+    setResumedBannerVisible(false);
 
     try {
       console.log('[InterviewEngine] Calling /interview/questions...');
@@ -145,41 +177,51 @@ export default function InterviewEngine() {
         difficulty: 'intermediate',
       });
 
+      // Check if stale (user navigated away, cancelled, or reset while in flight)
+      if (reqId !== generationRequestIdRef.current) {
+        console.log('[InterviewEngine] Stale question generation response ignored');
+        return;
+      }
+
       console.log('[InterviewEngine] API success:', resp.data?.status);
       const data = resp.data as { session_id: string; questions: InterviewQuestion[] };
+      const initialWindows = data.questions.map((q) => ({
+        question_id: q.id,
+        startMs: null,
+        endMs: null,
+      }));
+
       setSessionId(data.session_id);
       setQuestions(data.questions);
       setCurrentIdx(0);
-      setAnswerWindows(
-        data.questions.map((q) => ({
-          question_id: q.id,
-          startMs: null,
-          endMs: null,
-        })),
-      );
+      setAnswerWindows(initialWindows);
       setState('ready');
+
+      // Initialize authoritative active session
+      const newActiveSession: ActiveInterviewSession = {
+        sessionId: data.session_id,
+        userId: uid,
+        status: 'in_progress',
+        questions: data.questions,
+        currentIdx: 0,
+        answerWindows: initialWindows,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        resumeSnapshot: resumeData,
+      };
+      setActiveInterviewSession(newActiveSession);
     } catch (e: any) {
-      console.error('[InterviewEngine] API failed:', e?.response?.data || e?.message);
-      setState('error');
-      setError(e?.response?.data?.detail || e?.message || 'Failed to generate questions.');
+      if (reqId === generationRequestIdRef.current) {
+        console.error('[InterviewEngine] API failed:', e?.response?.data || e?.message);
+        setState('error');
+        setError(e?.response?.data?.detail || e?.message || 'Failed to generate questions.');
+      }
     } finally {
-      isGeneratingRef.current = false;
+      if (reqId === generationRequestIdRef.current) {
+        isGeneratingRef.current = false;
+      }
     }
   };
-
-  // On mount: if parsedResume already exists in context (e.g. navigating back),
-  // auto-start question generation.
-  useEffect(() => {
-    if (!userId) {
-      // Auth not ready yet — wait for it
-      return;
-    }
-    if (parsedResume && state === 'loading_resume') {
-      console.log('[InterviewEngine] Mount/context: parsedResume found, auto-generating');
-      generateQuestions(parsedResume, userId);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [parsedResume, userId]);
 
   useEffect(() => {
     if (!currentQuestion) return;
@@ -195,6 +237,13 @@ export default function InterviewEngine() {
     }
 
     setState('analyzing');
+    if (activeInterviewSession) {
+      setActiveInterviewSession({
+        ...activeInterviewSession,
+        status: 'evaluating',
+        updatedAt: new Date().toISOString(),
+      });
+    }
 
     // Compute answer offsets from absolute ms.
     const videoStartMs = new Date(result.start_time).getTime();
@@ -258,21 +307,64 @@ export default function InterviewEngine() {
       setReport(reportData || null);
       setVideoUrl(result.video_url);
 
+      // 4) Lifecycle completion:
+      // Mark session completed, persist report in history, clear transient active session,
+      // and CLEAR ACTIVE RESUME GLOBALLY!
+      const completedSession: CompletedInterviewSession = {
+        sessionId,
+        userId,
+        createdAt: activeInterviewSession?.createdAt || new Date().toISOString(),
+        questions,
+        report: reportData,
+        videoUrl: result.video_url,
+        timelineData: timelineSync || null,
+        resumeSnapshot: parsedResume,
+      };
+
+      saveCompletedInterview(completedSession);
+      clearActiveInterviewSession();
+      clearActiveResume();
+
       setState('reviewing');
     } catch (e: any) {
+      // On failure, do NOT mark as completed or clear the resume. Allow retry.
       setState('error');
       setError(e?.response?.data?.detail || e?.message || 'Interview pipeline failed.');
     }
   };
 
   const updateWindow = (questionId: string, patch: Partial<Pick<AnswerWindowMs, 'startMs' | 'endMs'>>) => {
-    setAnswerWindows((prev) =>
-      prev.map((w) => (w.question_id === questionId ? { ...w, ...patch } : w)),
-    );
+    const updated = answerWindows.map((w) => (w.question_id === questionId ? { ...w, ...patch } : w));
+    setAnswerWindows(updated);
+    if (activeInterviewSession && activeInterviewSession.sessionId === sessionId) {
+      setActiveInterviewSession({
+        ...activeInterviewSession,
+        answerWindows: updated,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+  };
+
+  const handleNextQuestion = () => {
+    const nextIdx = Math.min(currentIdx + 1, questions.length - 1);
+    setCurrentIdx(nextIdx);
+    if (activeInterviewSession && activeInterviewSession.sessionId === sessionId) {
+      setActiveInterviewSession({
+        ...activeInterviewSession,
+        currentIdx: nextIdx,
+        updatedAt: new Date().toISOString(),
+      });
+    }
   };
 
   const resetAll = () => {
-    setParsedResume(null);
+    // Invalidate any in-flight request
+    generationRequestIdRef.current++;
+    isGeneratingRef.current = false;
+
+    clearActiveResume();
+    clearActiveInterviewSession();
+
     setState('loading_resume');
     setQuestions([]);
     setSessionId(null);
@@ -282,278 +374,428 @@ export default function InterviewEngine() {
     setTimelineData(null);
     setReport(null);
     setError(null);
+    setResumedBannerVisible(false);
   };
 
   return (
     <div className="min-h-full flex flex-col w-full">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">AI Mock Interview Simulator</h1>
-        <p className="text-indigo-200/60 max-w-2xl text-sm sm:text-base">
-          Resume-aware questions, continuous recording, timestamped feedback.
-        </p>
+      <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">AI Mock Interview Simulator</h1>
+          <p className="text-indigo-200/60 max-w-2xl text-sm sm:text-base">
+            Resume-aware questions, continuous recording, timestamped feedback.
+          </p>
+        </div>
+
+        {/* Interview History & Navigation Controls */}
+        <div className="flex items-center gap-3">
+          {completedInterviews && completedInterviews.length > 0 && (
+            <button
+              onClick={() => {
+                setSelectedHistoricalSession(null);
+                setIsViewingHistory(!isViewingHistory);
+              }}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-800/80 hover:bg-slate-700/80 text-sm font-medium text-slate-300 border border-slate-700/60 transition-colors shadow-sm"
+            >
+              <History className="w-4 h-4 text-indigo-400" />
+              {isViewingHistory ? 'Back to Interview' : `Past Interviews (${completedInterviews.length})`}
+            </button>
+          )}
+
+          {state !== 'loading_resume' && !isViewingHistory && (
+            <button
+              onClick={resetAll}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800/60 hover:bg-slate-700/60 text-xs font-medium text-slate-400 hover:text-white border border-slate-700/40 transition-colors"
+              title="Reset and start fresh"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Reset
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="flex-1 flex flex-col relative w-full h-full">
-        <AnimatePresence mode="wait">
-          {state === 'loading_resume' && (
-            <motion.div
-              key="loading"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="flex-1 flex items-center justify-center"
+      {/* Resumed unfinished session banner */}
+      {resumedBannerVisible && state === 'ready' && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-6 p-4 rounded-2xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-between gap-4"
+        >
+          <div className="flex items-center gap-3">
+            <Sparkles className="w-5 h-5 text-indigo-400 shrink-0" />
+            <p className="text-sm text-indigo-200">
+              Resumed your in-progress interview at Question {currentIdx + 1} of {questions.length}.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setResumedBannerVisible(false)}
+              className="text-xs text-indigo-300 hover:text-white font-medium transition-colors px-2 py-1"
             >
-              <div className="w-full max-w-3xl">
-                <div className="mb-8 text-center">
-                  <h2 className="text-2xl font-bold text-white mb-2 tracking-tight">
-                    Upload your resume to begin
-                  </h2>
-                  <p className="text-slate-400 text-sm">
-                    We’ll parse your resume first, then generate interview questions tailored to your projects and skills.
-                  </p>
-                </div>
-
-                <div className="bg-slate-800/40 border border-slate-700/50 p-6 rounded-3xl backdrop-blur-xl shadow-2xl">
-                  <ResumeUploader
-                    onParseComplete={(data: ParsedResumeData) => {
-                      console.log('onParseComplete called! data keys:', Object.keys(data), 'skills count:', data?.skills?.length);
-                      setParsedResume(data);
-                      setError(null);
-                      if (userId) {
-                        generateQuestions(data, userId);
-                      }
-                    }}
-                  />
-                </div>
-              </div>
-            </motion.div>
-          )}
-
-          {state === 'generating_questions' && (
-            <motion.div
-              key="generating"
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
-              className="flex-1 flex items-center justify-center p-12 min-h-[500px]"
+              Dismiss
+            </button>
+            <button
+              onClick={resetAll}
+              className="text-xs text-rose-300 hover:text-rose-200 font-medium transition-colors px-2.5 py-1 rounded-lg bg-rose-500/10 border border-rose-500/20"
             >
-              <div className="bg-slate-800/60 border border-slate-700/50 p-8 rounded-3xl backdrop-blur-xl shadow-2xl w-full max-w-md text-center">
-                <div className="relative mb-6">
-                  <div className="absolute inset-0 bg-indigo-500 rounded-full blur-xl opacity-30 animate-pulse" />
-                  <Loader2 className="w-16 h-16 text-indigo-400 animate-spin relative z-10 mx-auto" />
-                </div>
-                <h3 className="text-xl font-bold text-slate-100 mb-2">Generating Interview Questions</h3>
-                <p className="text-slate-400 text-sm h-10">Using your parsed resume...</p>
-              </div>
-            </motion.div>
-          )}
+              Discard & Start New
+            </button>
+          </div>
+        </motion.div>
+      )}
 
-          {state === 'error' && (
-            <motion.div
-              key="error"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="flex-1 flex items-center justify-center p-12"
-            >
-              <div className="bg-slate-800/60 border border-slate-700/50 p-8 rounded-3xl backdrop-blur-xl shadow-2xl w-full max-w-md">
-                <div className="flex items-center gap-3 mb-4 text-rose-300">
-                  <AlertTriangle className="w-6 h-6" />
-                  <h3 className="text-lg font-semibold">Interview failed</h3>
-                </div>
-                <p className="text-slate-300 text-sm mb-6">{error || 'Unknown error'}</p>
-                <button
-                  onClick={resetAll}
-                  className="w-full px-5 py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-semibold transition-colors"
-                >
-                  Try Again
-                </button>
-              </div>
-            </motion.div>
-          )}
-
-          {(state === 'ready' || state === 'recording' || state === 'waiting_stop') && (
-            <motion.div
-              key="engine"
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
-              className="flex-1 flex flex-col lg:flex-row gap-6 w-full"
-            >
-              <VoiceRecorder onRecordingComplete={onSessionRecordingComplete}>
-                {(rec) => (
-                  <>
-                    <div className="flex-1 min-w-0">
-                      <WebcamMonitor
-                        videoRef={rec.videoRef}
-                        status={rec.status}
-                        error={rec.error}
-                        initCameraLabel="Enable Camera"
-                        onInitCamera={rec.initCamera}
-                      />
-                    </div>
-
-                    <div className="w-full lg:w-96 flex flex-col bg-slate-800/30 border border-slate-700/50 rounded-2xl h-[520px] overflow-hidden">
-                      <div className="p-5 border-b border-slate-700/50 bg-slate-900/40 backdrop-blur-md">
-                        <div className="flex items-center justify-between">
-                          <h2 className="text-lg font-semibold text-slate-100 flex items-center gap-2">
-                            <Sparkles className="w-5 h-5 text-indigo-400" />
-                            Interview Flow
-                          </h2>
-                          <span className="text-xs text-slate-400">Q{currentIdx + 1}/{questions.length}</span>
-                        </div>
-                        <p className="text-xs text-slate-400 mt-1">
-                          {rec.status === 'recording' ? 'Recording... mark your answer window.' : 'Start recording to begin.'}
-                        </p>
-                      </div>
-
-                      <div className="p-5 flex-1 overflow-y-auto">
-                        {!currentQuestion && (
-                          <div className="text-slate-400 text-sm">No questions available.</div>
-                        )}
-
-                        {currentQuestion && (
-                          <div className="space-y-4">
-                            <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-700/50">
-                              <div className="text-xs uppercase tracking-wider text-indigo-300 font-semibold mb-2">
-                                {currentQuestion.category.replace('_', ' ')}
-                              </div>
-                              <div className="text-sm text-slate-100 font-medium leading-relaxed">
-                                {currentQuestion.text}
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-3">
-                              {state === 'ready' && (
-                                <button
-                                  onClick={async () => {
-                                    await rec.initCamera();
-                                    setState('recording');
-                                    rec.startRecording();
-                                  }}
-                                  disabled={rec.status !== 'ready' && rec.status !== 'idle'}
-                                  className="col-span-2 px-5 py-3 rounded-xl bg-gradient-to-r from-primary to-accent text-white font-semibold shadow-lg shadow-primary/25 hover:shadow-primary/40 hover:-translate-y-0.5 transition-all disabled:opacity-50"
-                                >
-                                  Start Interview Recording
-                                </button>
-                              )}
-
-                              {canStartAnswer && (
-                                <button
-                                  onClick={() => updateWindow(currentQuestion.id, { startMs: Date.now() })}
-                                  className="px-4 py-3 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30 font-semibold transition-colors"
-                                >
-                                  Start Answer
-                                </button>
-                              )}
-
-                              {canStopAnswer && (
-                                <button
-                                  onClick={() => updateWindow(currentQuestion.id, { endMs: Date.now() })}
-                                  className="px-4 py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-semibold border border-slate-600 transition-colors"
-                                >
-                                  Stop Answer
-                                </button>
-                              )}
-
-                              {canGoNext && currentIdx < questions.length - 1 && (
-                                <button
-                                  onClick={() => setCurrentIdx((i) => Math.min(i + 1, questions.length - 1))}
-                                  className="col-span-2 px-4 py-3 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 border border-indigo-500/30 font-semibold transition-colors"
-                                >
-                                  Next Question
-                                </button>
-                              )}
-
-                              {canGoNext && currentIdx === questions.length - 1 && (
-                                <button
-                                  onClick={() => {
-                                    setState('waiting_stop');
-                                    rec.stopRecording();
-                                  }}
-                                  className="col-span-2 px-4 py-3 rounded-xl bg-gradient-to-r from-primary to-accent text-white font-semibold shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-all"
-                                >
-                                  Finish Interview
-                                </button>
-                              )}
-                            </div>
-
-                            <div className="text-xs text-slate-400">
-                              Tip: Keep answering until you click "Stop Answer" for each question.
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      {(rec.status === 'recording' || state === 'recording') && (
-                        <div className="p-5 border-t border-slate-700/50 bg-slate-900/30">
-                          <div className="flex items-center justify-between text-xs text-slate-300">
-                            <span>Recording time</span>
-                            <span className="font-mono">{Math.floor(rec.duration)}s</span>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
-              </VoiceRecorder>
-            </motion.div>
-          )}
-
-          {(state === 'analyzing' || state === 'reporting') && (
-            <motion.div
-              key="processing"
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
-              className="flex-1 flex flex-col items-center justify-center p-12 min-h-[500px]"
-            >
-              <div className="bg-slate-800/60 border border-slate-700/50 p-8 rounded-3xl backdrop-blur-xl shadow-2xl w-full max-w-md text-center">
-                <div className="relative mb-6">
-                  <div className="absolute inset-0 bg-indigo-500 rounded-full blur-xl opacity-30 animate-pulse" />
-                  <Loader2 className="w-16 h-16 text-indigo-400 animate-spin relative z-10 mx-auto" />
-                </div>
-                <h3 className="text-xl font-bold text-slate-100 mb-2">
-                  {state === 'analyzing' ? 'Analyzing Your Performance' : 'Generating Final Report'}
-                </h3>
-                <p className="text-slate-400 text-sm">{state === 'analyzing' ? 'Speech + eye contact + timeline synchronization...' : 'AI scoring + actionable feedback...'}</p>
-              </div>
-            </motion.div>
-          )}
-
-          {state === 'reviewing' && videoUrl && timelineData && (
-            <motion.div
-              key="review"
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -16 }}
-              className="flex flex-col gap-6 w-full"
-            >
+      {/* Historical Report View Modal/Screen */}
+      {isViewingHistory && (
+        <motion.div
+          key="history-panel"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          className="flex-1 flex flex-col w-full"
+        >
+          {selectedHistoricalSession ? (
+            <div className="flex flex-col gap-6 w-full">
               <div className="flex items-center justify-between">
-                <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                  <Volume2 className="w-5 h-5 text-indigo-400" />
-                  Your Session Review
-                </h2>
                 <button
-                  onClick={resetAll}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-sm font-medium rounded-lg text-white transition-colors"
+                  onClick={() => setSelectedHistoricalSession(null)}
+                  className="flex items-center gap-2 text-sm text-indigo-300 hover:text-white transition-colors"
                 >
-                  Start New Session
+                  <ArrowLeft className="w-4 h-4" />
+                  Back to Past Interviews
                 </button>
+                <span className="text-xs text-slate-400">
+                  {new Date(selectedHistoricalSession.createdAt).toLocaleString()}
+                </span>
               </div>
 
               <InterviewReview
-                videoUrl={videoUrl}
-                timelineData={timelineData}
-                perQuestionFeedback={report?.per_question_feedback}
-                questions={questions}
-                report={report}
+                videoUrl={selectedHistoricalSession.videoUrl || ''}
+                timelineData={selectedHistoricalSession.timelineData || { video_start_time: '', duration_seconds: 0, total_events: 0, timeline: [], summary: {} }}
+                perQuestionFeedback={selectedHistoricalSession.report?.per_question_feedback}
+                questions={selectedHistoricalSession.questions}
+                report={selectedHistoricalSession.report}
               />
-            </motion.div>
+            </div>
+          ) : (
+            <div className="space-y-4 max-w-4xl mx-auto w-full">
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <Award className="w-5 h-5 text-indigo-400" />
+                  Past Completed Interviews
+                </h2>
+                <span className="text-xs text-slate-400">{completedInterviews.length} sessions recorded</span>
+              </div>
+
+              <div className="grid gap-4">
+                {completedInterviews.map((session, idx) => (
+                  <div
+                    key={session.sessionId || idx}
+                    className="p-5 rounded-2xl bg-slate-800/40 border border-slate-700/50 hover:border-indigo-500/40 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-white">Interview Session #{completedInterviews.length - idx}</span>
+                        {session.report?.final_score !== undefined && (
+                          <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                            Score: {session.report.final_score}%
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-400 flex items-center gap-1.5">
+                        <Calendar className="w-3.5 h-3.5" />
+                        {new Date(session.createdAt).toLocaleString()} • {session.questions?.length || 0} Questions
+                      </p>
+                      {session.report?.final_verdict && (
+                        <p className="text-xs text-slate-300 line-clamp-1 mt-1">
+                          {session.report.final_verdict}
+                        </p>
+                      )}
+                    </div>
+
+                    <button
+                      onClick={() => setSelectedHistoricalSession(session)}
+                      className="px-4 py-2 bg-indigo-600/80 hover:bg-indigo-600 text-white rounded-xl text-xs font-semibold transition-all shadow-md self-start sm:self-auto"
+                    >
+                      View Report
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
-        </AnimatePresence>
-      </div>
+        </motion.div>
+      )}
+
+      {/* Main Flow Content (hidden when viewing history) */}
+      {!isViewingHistory && (
+        <div className="flex-1 flex flex-col relative w-full h-full">
+          <AnimatePresence mode="wait">
+            {state === 'loading_resume' && (
+              <motion.div
+                key="loading"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="flex-1 flex items-center justify-center"
+              >
+                <div className="w-full max-w-3xl">
+                  <div className="mb-8 text-center">
+                    <h2 className="text-2xl font-bold text-white mb-2 tracking-tight">
+                      Upload your resume to begin
+                    </h2>
+                    <p className="text-slate-400 text-sm">
+                      We’ll parse your resume first, then generate interview questions tailored to your projects and skills.
+                    </p>
+                  </div>
+
+                  <div className="bg-slate-800/40 border border-slate-700/50 p-6 rounded-3xl backdrop-blur-xl shadow-2xl">
+                    <ResumeUploader
+                      onParseComplete={(data: ParsedResumeData) => {
+                        console.log('onParseComplete called! data keys:', Object.keys(data), 'skills count:', data?.skills?.length);
+                        setError(null);
+                        setTimeout(() => {
+                          setParsedResume(data);
+                          if (userId) {
+                            generateQuestions(data, userId);
+                          }
+                        }, 0);
+                      }}
+                    />
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {state === 'generating_questions' && (
+              <motion.div
+                key="generating"
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.98 }}
+                className="flex-1 flex items-center justify-center p-12 min-h-[500px]"
+              >
+                <div className="bg-slate-800/60 border border-slate-700/50 p-8 rounded-3xl backdrop-blur-xl shadow-2xl w-full max-w-md text-center">
+                  <div className="relative mb-6">
+                    <div className="absolute inset-0 bg-indigo-500 rounded-full blur-xl opacity-30 animate-pulse" />
+                    <Loader2 className="w-16 h-16 text-indigo-400 animate-spin relative z-10 mx-auto" />
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-100 mb-2">Generating Interview Questions</h3>
+                  <p className="text-slate-400 text-sm h-10">Using your parsed resume...</p>
+                </div>
+              </motion.div>
+            )}
+
+            {state === 'error' && (
+              <motion.div
+                key="error"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="flex-1 flex items-center justify-center p-12"
+              >
+                <div className="bg-slate-800/60 border border-slate-700/50 p-8 rounded-3xl backdrop-blur-xl shadow-2xl w-full max-w-md">
+                  <div className="flex items-center gap-3 mb-4 text-rose-300">
+                    <AlertTriangle className="w-6 h-6" />
+                    <h3 className="text-lg font-semibold">Interview failed</h3>
+                  </div>
+                  <p className="text-slate-300 text-sm mb-6">{error || 'Unknown error'}</p>
+                  <button
+                    onClick={resetAll}
+                    className="w-full px-5 py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-semibold transition-colors"
+                  >
+                    Try Again
+                  </button>
+                </div>
+              </motion.div>
+            )}
+
+            {(state === 'ready' || state === 'recording' || state === 'waiting_stop') && (
+              <motion.div
+                key="engine"
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -12 }}
+                className="flex-1 flex flex-col lg:flex-row gap-6 w-full"
+              >
+                <VoiceRecorder onRecordingComplete={onSessionRecordingComplete}>
+                  {(rec) => (
+                    <>
+                      <div className="flex-1 min-w-0">
+                        <WebcamMonitor
+                          videoRef={rec.videoRef}
+                          status={rec.status}
+                          error={rec.error}
+                          initCameraLabel="Enable Camera"
+                          onInitCamera={rec.initCamera}
+                        />
+                      </div>
+
+                      <div className="w-full lg:w-96 flex flex-col bg-slate-800/30 border border-slate-700/50 rounded-2xl h-[520px] overflow-hidden">
+                        <div className="p-5 border-b border-slate-700/50 bg-slate-900/40 backdrop-blur-md">
+                          <div className="flex items-center justify-between">
+                            <h2 className="text-lg font-semibold text-slate-100 flex items-center gap-2">
+                              <Sparkles className="w-5 h-5 text-indigo-400" />
+                              Interview Flow
+                            </h2>
+                            <span className="text-xs text-slate-400">Q{currentIdx + 1}/{questions.length}</span>
+                          </div>
+                          <p className="text-xs text-slate-400 mt-1">
+                            {rec.status === 'recording' ? 'Recording... mark your answer window.' : 'Start recording to begin.'}
+                          </p>
+                        </div>
+
+                        <div className="p-5 flex-1 overflow-y-auto">
+                          {!currentQuestion && (
+                            <div className="text-slate-400 text-sm">No questions available.</div>
+                          )}
+
+                          {currentQuestion && (
+                            <div className="space-y-4">
+                              <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-700/50">
+                                <div className="text-xs uppercase tracking-wider text-indigo-300 font-semibold mb-2">
+                                  {currentQuestion.category.replace('_', ' ')}
+                                </div>
+                                <div className="text-sm text-slate-100 font-medium leading-relaxed">
+                                  {currentQuestion.text}
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-3">
+                                {state === 'ready' && (
+                                  <button
+                                    onClick={async () => {
+                                      await rec.initCamera();
+                                      setState('recording');
+                                      rec.startRecording();
+                                    }}
+                                    disabled={rec.status !== 'ready' && rec.status !== 'idle'}
+                                    className="col-span-2 px-5 py-3 rounded-xl bg-gradient-to-r from-primary to-accent text-white font-semibold shadow-lg shadow-primary/25 hover:shadow-primary/40 hover:-translate-y-0.5 transition-all disabled:opacity-50"
+                                  >
+                                    Start Interview Recording
+                                  </button>
+                                )}
+
+                                {canStartAnswer && (
+                                  <button
+                                    onClick={() => updateWindow(currentQuestion.id, { startMs: Date.now() })}
+                                    className="px-4 py-3 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30 font-semibold transition-colors"
+                                  >
+                                    Start Answer
+                                  </button>
+                                )}
+
+                                {canStopAnswer && (
+                                  <button
+                                    onClick={() => updateWindow(currentQuestion.id, { endMs: Date.now() })}
+                                    className="px-4 py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-semibold border border-slate-600 transition-colors"
+                                  >
+                                    Stop Answer
+                                  </button>
+                                )}
+
+                                {canGoNext && currentIdx < questions.length - 1 && (
+                                  <button
+                                    onClick={handleNextQuestion}
+                                    className="col-span-2 px-4 py-3 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 border border-indigo-500/30 font-semibold transition-colors"
+                                  >
+                                    Next Question
+                                  </button>
+                                )}
+
+                                {canGoNext && currentIdx === questions.length - 1 && (
+                                  <button
+                                    onClick={() => {
+                                      setState('waiting_stop');
+                                      rec.stopRecording();
+                                    }}
+                                    className="col-span-2 px-4 py-3 rounded-xl bg-gradient-to-r from-primary to-accent text-white font-semibold shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-all"
+                                  >
+                                    Finish Interview
+                                  </button>
+                                )}
+                              </div>
+
+                              <div className="text-xs text-slate-400">
+                                Tip: Keep answering until you click "Stop Answer" for each question.
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {(rec.status === 'recording' || state === 'recording') && (
+                          <div className="p-5 border-t border-slate-700/50 bg-slate-900/30">
+                            <div className="flex items-center justify-between text-xs text-slate-300">
+                              <span>Recording time</span>
+                              <span className="font-mono">{Math.floor(rec.duration)}s</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </VoiceRecorder>
+              </motion.div>
+            )}
+
+            {(state === 'analyzing' || state === 'reporting') && (
+              <motion.div
+                key="processing"
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.98 }}
+                className="flex-1 flex flex-col items-center justify-center p-12 min-h-[500px]"
+              >
+                <div className="bg-slate-800/60 border border-slate-700/50 p-8 rounded-3xl backdrop-blur-xl shadow-2xl w-full max-w-md text-center">
+                  <div className="relative mb-6">
+                    <div className="absolute inset-0 bg-indigo-500 rounded-full blur-xl opacity-30 animate-pulse" />
+                    <Loader2 className="w-16 h-16 text-indigo-400 animate-spin relative z-10 mx-auto" />
+                  </div>
+                  <h3 className="text-xl font-bold text-slate-100 mb-2">
+                    {state === 'analyzing' ? 'Analyzing Your Performance' : 'Generating Final Report'}
+                  </h3>
+                  <p className="text-slate-400 text-sm">
+                    {state === 'analyzing'
+                      ? 'Speech + eye contact + timeline synchronization...'
+                      : 'AI scoring + actionable feedback...'}
+                  </p>
+                </div>
+              </motion.div>
+            )}
+
+            {state === 'reviewing' && videoUrl && timelineData && (
+              <motion.div
+                key="review"
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -16 }}
+                className="flex flex-col gap-6 w-full"
+              >
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                    <Volume2 className="w-5 h-5 text-indigo-400" />
+                    Your Session Review
+                  </h2>
+                  <button
+                    onClick={resetAll}
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-sm font-medium rounded-lg text-white transition-colors"
+                  >
+                    Start New Session
+                  </button>
+                </div>
+
+                <InterviewReview
+                  videoUrl={videoUrl}
+                  timelineData={timelineData}
+                  perQuestionFeedback={report?.per_question_feedback}
+                  questions={questions}
+                  report={report}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
     </div>
   );
 }
-

@@ -408,6 +408,11 @@ export const getInterviewReport = async (sessionId: string, userId: string): Pro
     return data;
 };
 
+export const getInterviewHistory = async (userId: string): Promise<{ status: string; history: any[] }> => {
+    const { data } = await apiClient.get(`/interview/history/${userId}`);
+    return data;
+};
+
 export interface VideoRecommendation {
     title: string;
     video_id: string;
