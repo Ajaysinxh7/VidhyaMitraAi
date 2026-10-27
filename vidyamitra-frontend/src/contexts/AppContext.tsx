@@ -34,6 +34,7 @@ export interface AnswerWindowMsItem {
     question_id: string;
     startMs: number | null;
     endMs: number | null;
+    skipped?: boolean;
 }
 
 export type InterviewSessionStatus = 'in_progress' | 'evaluating' | 'completed' | 'error';

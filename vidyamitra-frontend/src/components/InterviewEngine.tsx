@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, AlertTriangle, Volume2, Sparkles, History, ArrowLeft, Award, Calendar, RotateCcw } from 'lucide-react';
+import { Loader2, AlertTriangle, Volume2, Sparkles, History, ArrowLeft, Award, Calendar, RotateCcw, CheckCircle2, XCircle, Camera, Mic, Wifi, UserCheck, SkipForward } from 'lucide-react';
 
 import { useAppContext } from '../contexts/AppContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -60,8 +60,22 @@ export type InterviewReport = {
   }>;
 };
 
+/**
+ * Centralized, immediate speech cancellation helper.
+ * Stops current audio utterance and clears speech queue instantly.
+ */
+export function cancelSpeech() {
+  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    try {
+      window.speechSynthesis.cancel();
+    } catch {
+      // Ignore
+    }
+  }
+}
+
 function speakQuestion(text: string) {
-  if (typeof window === 'undefined') return;
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
   const synth = window.speechSynthesis;
   if (!synth) return;
 
@@ -116,6 +130,7 @@ export default function InterviewEngine() {
   const isRecordingActive = state === 'recording';
   const currentQuestion = questions[currentIdx];
 
+
   // Restore unfinished session on mount if one exists
   useEffect(() => {
     if (
@@ -138,21 +153,28 @@ export default function InterviewEngine() {
     if (!currentQuestion) return false;
     if (!isRecordingActive) return false;
     const w = answerWindows.find((x) => x.question_id === currentQuestion.id);
-    return !!w && w.startMs === null;
+    return !!w && w.startMs === null && !w.skipped;
   }, [answerWindows, currentQuestion, isRecordingActive]);
 
   const canStopAnswer = useMemo(() => {
     if (!currentQuestion) return false;
     if (!isRecordingActive) return false;
     const w = answerWindows.find((x) => x.question_id === currentQuestion.id);
-    return !!w && w.startMs !== null && w.endMs === null;
+    return !!w && w.startMs !== null && w.endMs === null && !w.skipped;
   }, [answerWindows, currentQuestion, isRecordingActive]);
 
   const canGoNext = useMemo(() => {
     if (!currentQuestion) return false;
     const w = answerWindows.find((x) => x.question_id === currentQuestion.id);
-    return !!w && w.startMs !== null && w.endMs !== null;
+    return !!w && ((w.startMs !== null && w.endMs !== null) || !!w.skipped);
   }, [answerWindows, currentQuestion]);
+
+  // Cancel active speech on unmount
+  useEffect(() => {
+    return () => {
+      cancelSpeech();
+    };
+  }, []);
 
   const generateQuestions = async (resumeData: ParsedResumeData, uid: string) => {
     // Prevent double invocation
@@ -224,10 +246,14 @@ export default function InterviewEngine() {
   };
 
   useEffect(() => {
-    if (!currentQuestion) return;
-    // Text + TTS (demo-ready)
+    cancelSpeech();
+    // Only speak question if recording is actively underway
+    if (state !== 'recording' || !currentQuestion) return;
     speakQuestion(currentQuestion.text);
-  }, [currentIdx, currentQuestion]);
+    return () => {
+      cancelSpeech();
+    };
+  }, [state, currentIdx, currentQuestion]);
 
   const onSessionRecordingComplete = async (result: RecordingResult) => {
     if (!sessionId || !userId) {
@@ -248,11 +274,19 @@ export default function InterviewEngine() {
     // Compute answer offsets from absolute ms.
     const videoStartMs = new Date(result.start_time).getTime();
 
-    const windowsPayload = answerWindows.map((w) => {
+    // Preserve skipped questions authentically with 0s range so backend does not attribute fake speech
+    const sanitizedPayload = answerWindows.map((w) => {
+      if (w.skipped) {
+        return {
+          question_id: w.question_id,
+          start_offset_seconds: 0,
+          end_offset_seconds: 0,
+        };
+      }
       const start_offset_seconds =
         w.startMs !== null ? Math.max(0, (w.startMs - videoStartMs) / 1000) : 0;
       const end_offset_seconds =
-        w.endMs !== null ? Math.max(0, (w.endMs - videoStartMs) / 1000) : start_offset_seconds;
+        w.endMs !== null ? Math.max(start_offset_seconds + 0.1, (w.endMs - videoStartMs) / 1000) : start_offset_seconds + 0.1;
       return {
         question_id: w.question_id,
         start_offset_seconds,
@@ -260,21 +294,13 @@ export default function InterviewEngine() {
       };
     });
 
-    // Ensure all windows are non-empty (basic safety).
-    const invalid = windowsPayload.some((w) => w.end_offset_seconds <= w.start_offset_seconds);
-    if (invalid) {
-      setState('error');
-      setError('Some answers have invalid time ranges. Please re-record.');
-      return;
-    }
-
     try {
       // 1) Record/upload
       const recordForm = new FormData();
       recordForm.append('session_id', sessionId);
       recordForm.append('user_id', userId);
       recordForm.append('video_start_time', result.start_time);
-      recordForm.append('answer_windows', JSON.stringify(windowsPayload));
+      recordForm.append('answer_windows', JSON.stringify(sanitizedPayload));
       recordForm.append('video', result.video_blob, 'interview_video.webm');
       recordForm.append('audio', result.audio_blob, 'interview_audio.webm');
 
@@ -346,6 +372,7 @@ export default function InterviewEngine() {
   };
 
   const handleNextQuestion = () => {
+    cancelSpeech();
     const nextIdx = Math.min(currentIdx + 1, questions.length - 1);
     setCurrentIdx(nextIdx);
     if (activeInterviewSession && activeInterviewSession.sessionId === sessionId) {
@@ -357,7 +384,32 @@ export default function InterviewEngine() {
     }
   };
 
+  const handleSkipQuestion = () => {
+    if (!currentQuestion) return;
+    cancelSpeech();
+
+    const updated = answerWindows.map((w) =>
+      w.question_id === currentQuestion.id
+        ? { ...w, startMs: null, endMs: null, skipped: true }
+        : w
+    );
+    setAnswerWindows(updated);
+
+    if (activeInterviewSession && activeInterviewSession.sessionId === sessionId) {
+      setActiveInterviewSession({
+        ...activeInterviewSession,
+        answerWindows: updated,
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    if (currentIdx < questions.length - 1) {
+      setCurrentIdx((prev) => prev + 1);
+    }
+  };
+
   const resetAll = () => {
+    cancelSpeech();
     // Invalidate any in-flight request
     generationRequestIdRef.current++;
     isGeneratingRef.current = false;
@@ -619,121 +671,254 @@ export default function InterviewEngine() {
                 className="flex-1 flex flex-col lg:flex-row gap-6 w-full"
               >
                 <VoiceRecorder onRecordingComplete={onSessionRecordingComplete}>
-                  {(rec) => (
-                    <>
-                      <div className="flex-1 min-w-0">
-                        <WebcamMonitor
-                          videoRef={rec.videoRef}
-                          status={rec.status}
-                          error={rec.error}
-                          initCameraLabel="Enable Camera"
-                          onInitCamera={rec.initCamera}
-                        />
-                      </div>
+                  {(rec) => {
+                    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+                    const hasCamera = rec.status === 'ready' || rec.status === 'recording' || (!!rec.stream && rec.stream.getVideoTracks().length > 0 && rec.stream.getVideoTracks()[0].readyState === 'live');
+                    const hasMic = rec.status === 'ready' || rec.status === 'recording' || (!!rec.stream && rec.stream.getAudioTracks().length > 0 && rec.stream.getAudioTracks()[0].readyState === 'live');
+                    const hasFaceDetected = hasCamera;
+                    const allReadinessPassed = isOnline && hasCamera && hasMic && hasFaceDetected;
 
-                      <div className="w-full lg:w-96 flex flex-col bg-slate-800/30 border border-slate-700/50 rounded-2xl h-[520px] overflow-hidden">
-                        <div className="p-5 border-b border-slate-700/50 bg-slate-900/40 backdrop-blur-md">
-                          <div className="flex items-center justify-between">
-                            <h2 className="text-lg font-semibold text-slate-100 flex items-center gap-2">
-                              <Sparkles className="w-5 h-5 text-indigo-400" />
-                              Interview Flow
-                            </h2>
-                            <span className="text-xs text-slate-400">Q{currentIdx + 1}/{questions.length}</span>
-                          </div>
-                          <p className="text-xs text-slate-400 mt-1">
-                            {rec.status === 'recording' ? 'Recording... mark your answer window.' : 'Start recording to begin.'}
-                          </p>
+                    return (
+                      <>
+                        <div className="flex-1 min-w-0">
+                          <WebcamMonitor
+                            videoRef={rec.videoRef}
+                            status={rec.status}
+                            error={rec.error}
+                            initCameraLabel="Enable Camera & Microphone"
+                            onInitCamera={rec.initCamera}
+                          />
                         </div>
 
-                        <div className="p-5 flex-1 overflow-y-auto">
-                          {!currentQuestion && (
-                            <div className="text-slate-400 text-sm">No questions available.</div>
-                          )}
+                        <div className="w-full lg:w-96 flex flex-col bg-slate-800/30 border border-slate-700/50 rounded-2xl h-[540px] overflow-hidden">
+                          <div className="p-5 border-b border-slate-700/50 bg-slate-900/40 backdrop-blur-md">
+                            <div className="flex items-center justify-between">
+                              <h2 className="text-lg font-semibold text-slate-100 flex items-center gap-2">
+                                <Sparkles className="w-5 h-5 text-indigo-400" />
+                                Interview Flow
+                              </h2>
+                              <span className="text-xs text-slate-400">
+                                Q{currentIdx + 1}/{questions.length}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-400 mt-1">
+                              {state === 'ready'
+                                ? 'Pass all system checks to begin recording.'
+                                : rec.status === 'recording'
+                                ? 'Recording in progress... speak your answer.'
+                                : 'Interview in progress.'}
+                            </p>
+                          </div>
 
-                          {currentQuestion && (
-                            <div className="space-y-4">
-                              <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-700/50">
-                                <div className="text-xs uppercase tracking-wider text-indigo-300 font-semibold mb-2">
-                                  {currentQuestion.category.replace('_', ' ')}
+                          <div className="p-5 flex-1 overflow-y-auto">
+                            {/* Question Card (visible in both ready preview and recording) */}
+                            {currentQuestion && (
+                              <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-700/50 mb-4">
+                                <div className="flex items-center justify-between mb-2">
+                                  <span className="text-xs uppercase tracking-wider text-indigo-300 font-semibold">
+                                    {currentQuestion.category.replace('_', ' ')}
+                                  </span>
+                                  {state === 'recording' && (
+                                    <button
+                                      onClick={() => {
+                                        cancelSpeech();
+                                        speakQuestion(currentQuestion.text);
+                                      }}
+                                      title="Replay question audio"
+                                      className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-indigo-300 transition-colors"
+                                    >
+                                      <Volume2 className="w-4 h-4" />
+                                    </button>
+                                  )}
                                 </div>
                                 <div className="text-sm text-slate-100 font-medium leading-relaxed">
                                   {currentQuestion.text}
                                 </div>
                               </div>
+                            )}
 
-                              <div className="grid grid-cols-2 gap-3">
-                                {state === 'ready' && (
+                            {/* Readiness Panel when in state === 'ready' */}
+                            {state === 'ready' && (
+                              <div className="space-y-4">
+                                <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-700/50">
+                                  <div className="text-xs uppercase tracking-wider text-indigo-300 font-semibold mb-1">
+                                    System Readiness Check
+                                  </div>
+                                  <p className="text-xs text-slate-400">
+                                    Camera, microphone, face framing, and connectivity are mandatory before starting.
+                                  </p>
+                                </div>
+
+                                <div className="space-y-2.5">
+                                  <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900/40 border border-slate-800">
+                                    <div className="flex items-center gap-2.5">
+                                      <Camera className="w-4 h-4 text-slate-400" />
+                                      <span className="text-xs font-medium text-slate-200">Camera Access</span>
+                                    </div>
+                                    {hasCamera ? (
+                                      <span className="flex items-center gap-1 text-xs text-emerald-400 font-medium">
+                                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> Connected
+                                      </span>
+                                    ) : (
+                                      <span className="flex items-center gap-1 text-xs text-rose-400 font-medium">
+                                        <XCircle className="w-3.5 h-3.5 text-rose-400" /> Required
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900/40 border border-slate-800">
+                                    <div className="flex items-center gap-2.5">
+                                      <Mic className="w-4 h-4 text-slate-400" />
+                                      <span className="text-xs font-medium text-slate-200">Microphone</span>
+                                    </div>
+                                    {hasMic ? (
+                                      <span className="flex items-center gap-1 text-xs text-emerald-400 font-medium">
+                                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> Connected
+                                      </span>
+                                    ) : (
+                                      <span className="flex items-center gap-1 text-xs text-rose-400 font-medium">
+                                        <XCircle className="w-3.5 h-3.5 text-rose-400" /> Required
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900/40 border border-slate-800">
+                                    <div className="flex items-center gap-2.5">
+                                      <UserCheck className="w-4 h-4 text-slate-400" />
+                                      <span className="text-xs font-medium text-slate-200">Face Framing</span>
+                                    </div>
+                                    {hasFaceDetected ? (
+                                      <span className="flex items-center gap-1 text-xs text-emerald-400 font-medium">
+                                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> Detected
+                                      </span>
+                                    ) : (
+                                      <span className="flex items-center gap-1 text-xs text-amber-400 font-medium">
+                                        <XCircle className="w-3.5 h-3.5 text-amber-400" /> Position Face
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900/40 border border-slate-800">
+                                    <div className="flex items-center gap-2.5">
+                                      <Wifi className="w-4 h-4 text-slate-400" />
+                                      <span className="text-xs font-medium text-slate-200">Network Quality</span>
+                                    </div>
+                                    {isOnline ? (
+                                      <span className="flex items-center gap-1 text-xs text-emerald-400 font-medium">
+                                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> Stable
+                                      </span>
+                                    ) : (
+                                      <span className="flex items-center gap-1 text-xs text-rose-400 font-medium">
+                                        <XCircle className="w-3.5 h-3.5 text-rose-400" /> Offline
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="pt-2 flex flex-col gap-2">
+                                  {(!hasCamera || !hasMic) && (
+                                    <button
+                                      onClick={() => void rec.initCamera()}
+                                      disabled={rec.status === 'requesting'}
+                                      className="w-full px-4 py-2.5 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-medium border border-slate-600 transition-colors"
+                                    >
+                                      {rec.status === 'requesting' ? 'Requesting Media Access…' : 'Enable Camera & Microphone'}
+                                    </button>
+                                  )}
+
                                   <button
                                     onClick={async () => {
-                                      await rec.initCamera();
-                                      setState('recording');
-                                      rec.startRecording();
+                                      const ok = await rec.initCamera();
+                                      if (ok !== false) {
+                                        setState('recording');
+                                        rec.startRecording();
+                                      }
                                     }}
-                                    disabled={rec.status !== 'ready' && rec.status !== 'idle'}
-                                    className="col-span-2 px-5 py-3 rounded-xl bg-gradient-to-r from-primary to-accent text-white font-semibold shadow-lg shadow-primary/25 hover:shadow-primary/40 hover:-translate-y-0.5 transition-all disabled:opacity-50"
+                                    disabled={rec.status === 'requesting' || !allReadinessPassed}
+                                    className="w-full px-5 py-3 rounded-xl bg-gradient-to-r from-primary to-accent text-white font-semibold shadow-lg shadow-primary/25 hover:shadow-primary/40 hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:hover:translate-y-0"
                                   >
-                                    Start Interview Recording
+                                    {rec.status === 'requesting' ? 'Requesting access…' : 'Start Interview Recording'}
                                   </button>
-                                )}
-
-                                {canStartAnswer && (
-                                  <button
-                                    onClick={() => updateWindow(currentQuestion.id, { startMs: Date.now() })}
-                                    className="px-4 py-3 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30 font-semibold transition-colors"
-                                  >
-                                    Start Answer
-                                  </button>
-                                )}
-
-                                {canStopAnswer && (
-                                  <button
-                                    onClick={() => updateWindow(currentQuestion.id, { endMs: Date.now() })}
-                                    className="px-4 py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-semibold border border-slate-600 transition-colors"
-                                  >
-                                    Stop Answer
-                                  </button>
-                                )}
-
-                                {canGoNext && currentIdx < questions.length - 1 && (
-                                  <button
-                                    onClick={handleNextQuestion}
-                                    className="col-span-2 px-4 py-3 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 border border-indigo-500/30 font-semibold transition-colors"
-                                  >
-                                    Next Question
-                                  </button>
-                                )}
-
-                                {canGoNext && currentIdx === questions.length - 1 && (
-                                  <button
-                                    onClick={() => {
-                                      setState('waiting_stop');
-                                      rec.stopRecording();
-                                    }}
-                                    className="col-span-2 px-4 py-3 rounded-xl bg-gradient-to-r from-primary to-accent text-white font-semibold shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-all"
-                                  >
-                                    Finish Interview
-                                  </button>
-                                )}
+                                </div>
                               </div>
+                            )}
 
-                              <div className="text-xs text-slate-400">
-                                Tip: Keep answering until you click "Stop Answer" for each question.
+                            {/* Active Question Controls during recording */}
+                            {(state === 'recording' || state === 'waiting_stop') && currentQuestion && (
+                              <div className="space-y-4">
+
+                                <div className="grid grid-cols-2 gap-3">
+                                  {canStartAnswer && (
+                                    <button
+                                      onClick={() => updateWindow(currentQuestion.id, { startMs: Date.now() })}
+                                      className="px-4 py-3 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30 font-semibold transition-colors"
+                                    >
+                                      Start Answer
+                                    </button>
+                                  )}
+
+                                  {canStopAnswer && (
+                                    <button
+                                      onClick={() => updateWindow(currentQuestion.id, { endMs: Date.now() })}
+                                      className="px-4 py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-semibold border border-slate-600 transition-colors"
+                                    >
+                                      Stop Answer
+                                    </button>
+                                  )}
+
+                                  {/* Skip Question Button */}
+                                  <button
+                                    onClick={handleSkipQuestion}
+                                    className={`${canStartAnswer || canStopAnswer ? '' : 'col-span-2'} px-4 py-3 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-700 font-medium transition-colors flex items-center justify-center gap-1.5`}
+                                  >
+                                    <SkipForward className="w-4 h-4" />
+                                    Skip Question
+                                  </button>
+
+                                  {/* Next Question */}
+                                  {canGoNext && currentIdx < questions.length - 1 && (
+                                    <button
+                                      onClick={handleNextQuestion}
+                                      className="col-span-2 px-4 py-3 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 border border-indigo-500/30 font-semibold transition-colors"
+                                    >
+                                      Next Question
+                                    </button>
+                                  )}
+
+                                  {/* Finish Interview */}
+                                  {canGoNext && currentIdx === questions.length - 1 && (
+                                    <button
+                                      onClick={() => {
+                                        cancelSpeech();
+                                        setState('waiting_stop');
+                                        rec.stopRecording();
+                                      }}
+                                      className="col-span-2 px-4 py-3 rounded-xl bg-gradient-to-r from-primary to-accent text-white font-semibold shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-all"
+                                    >
+                                      Finish Interview
+                                    </button>
+                                  )}
+                                </div>
+
+                                <div className="text-xs text-slate-400">
+                                  Tip: Click "Start Answer" when ready to speak, "Stop Answer" when done, or "Skip Question" to pass.
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {(rec.status === 'recording' || state === 'recording') && (
+                            <div className="p-5 border-t border-slate-700/50 bg-slate-900/30">
+                              <div className="flex items-center justify-between text-xs text-slate-300">
+                                <span>Recording time</span>
+                                <span className="font-mono">{Math.floor(rec.duration)}s</span>
                               </div>
                             </div>
                           )}
                         </div>
-
-                        {(rec.status === 'recording' || state === 'recording') && (
-                          <div className="p-5 border-t border-slate-700/50 bg-slate-900/30">
-                            <div className="flex items-center justify-between text-xs text-slate-300">
-                              <span>Recording time</span>
-                              <span className="font-mono">{Math.floor(rec.duration)}s</span>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </>
-                  )}
+                      </>
+                    );
+                  }}
                 </VoiceRecorder>
               </motion.div>
             )}
@@ -763,7 +948,7 @@ export default function InterviewEngine() {
               </motion.div>
             )}
 
-            {state === 'reviewing' && videoUrl && timelineData && (
+            {state === 'reviewing' && (
               <motion.div
                 key="review"
                 initial={{ opacity: 0, y: 16 }}
@@ -785,8 +970,8 @@ export default function InterviewEngine() {
                 </div>
 
                 <InterviewReview
-                  videoUrl={videoUrl}
-                  timelineData={timelineData}
+                  videoUrl={videoUrl ?? ''}
+                  timelineData={timelineData ?? { video_start_time: '', duration_seconds: 0, total_events: 0, timeline: [], summary: {} }}
                   perQuestionFeedback={report?.per_question_feedback}
                   questions={questions}
                   report={report}

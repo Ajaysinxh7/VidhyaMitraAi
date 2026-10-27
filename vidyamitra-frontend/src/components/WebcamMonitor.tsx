@@ -6,7 +6,7 @@ export interface WebcamMonitorProps {
   error: string | null;
   className?: string;
   initCameraLabel?: string;
-  onInitCamera?: () => void | Promise<void>;
+  onInitCamera?: () => void | Promise<any>;
 }
 
 export default function WebcamMonitor({
