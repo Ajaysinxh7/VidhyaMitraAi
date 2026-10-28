@@ -56,6 +56,15 @@ export function useMediaRecorder(): UseMediaRecorderReturn {
     };
   }, []);
 
+  // Keep active stream attached to videoRef if element remounts
+  useEffect(() => {
+    if (stream && videoRef.current && videoRef.current.srcObject !== stream) {
+      videoRef.current.srcObject = stream;
+      videoRef.current.muted = true;
+      videoRef.current.play().catch(() => {});
+    }
+  });
+
   /**
    * Acquires a camera + microphone stream.
    * Camera is MANDATORY — no audio-only fallback.

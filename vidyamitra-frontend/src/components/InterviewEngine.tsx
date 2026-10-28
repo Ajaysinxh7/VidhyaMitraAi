@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, AlertTriangle, Volume2, Sparkles, History, ArrowLeft, Award, Calendar, RotateCcw, CheckCircle2, XCircle, Camera, Mic, Wifi, UserCheck, SkipForward } from 'lucide-react';
+import { Loader2, AlertTriangle, Volume2, Sparkles, History, ArrowLeft, Award, Calendar, RotateCcw, CheckCircle2, XCircle, Camera, Mic, Wifi, UserCheck, SkipForward, Server, AlertCircle } from 'lucide-react';
 
 import { useAppContext } from '../contexts/AppContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -126,6 +126,101 @@ export default function InterviewEngine() {
   // Guard against double-firing and stale responses
   const isGeneratingRef = useRef(false);
   const generationRequestIdRef = useRef(0);
+
+  // System readiness and gating states
+  const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'error'>('checking');
+  const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [faceFramingStatus, setFaceFramingStatus] = useState<'not_checked' | 'checking' | 'position_face' | 'ready'>('not_checked');
+  const [isStartingInterview, setIsStartingInterview] = useState(false);
+  const isStartingInterviewRef = useRef(false);
+
+  // Monitor network online/offline state
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Backend reachability preflight check
+  const checkBackendConnectivity = useCallback(async () => {
+    setBackendStatus('checking');
+    try {
+      const res = await apiClient.get('/', { timeout: 4000 });
+      if (res?.status === 200 || res?.data?.status === 'ok' || res === undefined) {
+        setBackendStatus('connected');
+        return true;
+      }
+      setBackendStatus('connected');
+      return true;
+    } catch (err) {
+      console.warn('[InterviewEngine] Backend health check failed:', err);
+      setBackendStatus('error');
+      return false;
+    }
+  }, []);
+
+  // Trigger backend check whenever entering ready state
+  useEffect(() => {
+    if (state === 'ready') {
+      void checkBackendConnectivity();
+    }
+  }, [state, checkBackendConnectivity]);
+
+  // Face Framing Detection Loop when in ready state
+  useEffect(() => {
+    if (state !== 'ready') {
+      setFaceFramingStatus('not_checked');
+      return;
+    }
+
+    let cancelled = false;
+    let intervalId: any = null;
+
+    if (typeof window !== 'undefined' && 'FaceDetector' in window) {
+      try {
+        const detector = new (window as any).FaceDetector({ fastMode: true, maxDetectedFaces: 2 });
+        const checkFace = async () => {
+          if (cancelled) return;
+          const videoEl = document.querySelector('video');
+          if (videoEl && videoEl.readyState >= 2) {
+            try {
+              const faces = await detector.detect(videoEl);
+              if (faces && faces.length > 0) {
+                const box = faces[0].boundingBox;
+                const cx = box.x + box.width / 2;
+                const cy = box.y + box.height / 2;
+                const vw = videoEl.videoWidth || 640;
+                const vh = videoEl.videoHeight || 480;
+                const isCentered = cx > vw * 0.25 && cx < vw * 0.75 && cy > vh * 0.2 && cy < vh * 0.8;
+                if (!cancelled) setFaceFramingStatus(isCentered ? 'ready' : 'position_face');
+              } else {
+                if (!cancelled) setFaceFramingStatus('position_face');
+              }
+            } catch {
+              if (!cancelled) setFaceFramingStatus('ready');
+            }
+          }
+        };
+
+        intervalId = setInterval(checkFace, 600);
+        void checkFace();
+      } catch {
+        setFaceFramingStatus('ready');
+      }
+    } else {
+      setFaceFramingStatus('ready');
+    }
+
+    return () => {
+      cancelled = true;
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, [state]);
 
   const isRecordingActive = state === 'recording';
   const currentQuestion = questions[currentIdx];
@@ -408,11 +503,86 @@ export default function InterviewEngine() {
     }
   };
 
+  const handleStartInterview = async (rec: {
+    status: string;
+    stream: MediaStream | null;
+    startRecording: () => void;
+  }) => {
+    if (isStartingInterviewRef.current || state === 'recording') return;
+    isStartingInterviewRef.current = true;
+    setIsStartingInterview(true);
+    setError(null);
+
+    try {
+      const liveStream = rec.stream;
+      const hasCam =
+        rec.status === 'ready' ||
+        rec.status === 'recording' ||
+        (!!liveStream && liveStream.getVideoTracks().some((t) => t.readyState === 'live' && t.enabled));
+      const hasAudio =
+        rec.status === 'ready' ||
+        rec.status === 'recording' ||
+        (!!liveStream && liveStream.getAudioTracks().some((t) => t.readyState === 'live' && t.enabled));
+
+      if (!hasCam || !hasAudio) {
+        setError('Camera and microphone tracks are inactive. Please enable them to proceed.');
+        return;
+      }
+
+      if (!isOnline) {
+        setError('Internet connection is offline. Please check your network.');
+        return;
+      }
+
+      if (backendStatus === 'error') {
+        setError('Backend service is unreachable. Please retry checks.');
+        return;
+      }
+
+      // If still checking, re-attempt once synchronously before gating
+      if (backendStatus === 'checking') {
+        const ok = await checkBackendConnectivity();
+        if (!ok) {
+          setError('Backend service is unreachable. Please retry checks.');
+          return;
+        }
+      }
+
+      if (faceFramingStatus !== 'ready') {
+        setError('Please position your face properly within the camera guide before starting.');
+        return;
+      }
+
+      setState('recording');
+      rec.startRecording();
+    } catch (err: any) {
+      console.error('[InterviewEngine] Failed to start interview:', err);
+      setError(err?.message || 'Failed to start interview.');
+    } finally {
+      setIsStartingInterview(false);
+      isStartingInterviewRef.current = false;
+    }
+  };
+
+  const handleRetryChecks = async (rec: {
+    status: string;
+    stream: MediaStream | null;
+    initCamera: () => Promise<boolean>;
+  }) => {
+    setError(null);
+    void checkBackendConnectivity();
+    if (rec.status === 'error' || !rec.stream) {
+      await rec.initCamera();
+    }
+  };
+
   const resetAll = () => {
     cancelSpeech();
     // Invalidate any in-flight request
     generationRequestIdRef.current++;
     isGeneratingRef.current = false;
+    isStartingInterviewRef.current = false;
+    setIsStartingInterview(false);
 
     clearActiveResume();
     clearActiveInterviewSession();
@@ -427,6 +597,7 @@ export default function InterviewEngine() {
     setReport(null);
     setError(null);
     setResumedBannerVisible(false);
+    setFaceFramingStatus('not_checked');
   };
 
   return (
@@ -672,250 +843,499 @@ export default function InterviewEngine() {
               >
                 <VoiceRecorder onRecordingComplete={onSessionRecordingComplete}>
                   {(rec) => {
-                    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
-                    const hasCamera = rec.status === 'ready' || rec.status === 'recording' || (!!rec.stream && rec.stream.getVideoTracks().length > 0 && rec.stream.getVideoTracks()[0].readyState === 'live');
-                    const hasMic = rec.status === 'ready' || rec.status === 'recording' || (!!rec.stream && rec.stream.getAudioTracks().length > 0 && rec.stream.getAudioTracks()[0].readyState === 'live');
-                    const hasFaceDetected = hasCamera;
-                    const allReadinessPassed = isOnline && hasCamera && hasMic && hasFaceDetected;
+                    const hasLiveCamera =
+                      rec.status === 'ready' ||
+                      rec.status === 'recording' ||
+                      (!!rec.stream &&
+                        rec.stream.getVideoTracks().length > 0 &&
+                        rec.stream.getVideoTracks().some((t) => t.readyState === 'live' && t.enabled));
+
+                    const hasLiveMic =
+                      rec.status === 'ready' ||
+                      rec.status === 'recording' ||
+                      (!!rec.stream &&
+                        rec.stream.getAudioTracks().length > 0 &&
+                        rec.stream.getAudioTracks().some((t) => t.readyState === 'live' && t.enabled));
+
+                    const isFaceFramed = !hasLiveCamera ? false : faceFramingStatus === 'ready';
+                    // Accept 'checking' as not-yet-failed — handleStartInterview will re-check if needed
+                    const isBackendReady = backendStatus === 'connected' || backendStatus === 'checking';
+
+                    const allReadinessPassed =
+                      isOnline && hasLiveCamera && hasLiveMic && isFaceFramed && isBackendReady;
 
                     return (
                       <>
-                        <div className="flex-1 min-w-0">
-                          <WebcamMonitor
-                            videoRef={rec.videoRef}
-                            status={rec.status}
-                            error={rec.error}
-                            initCameraLabel="Enable Camera & Microphone"
-                            onInitCamera={rec.initCamera}
-                          />
-                        </div>
-
-                        <div className="w-full lg:w-96 flex flex-col bg-slate-800/30 border border-slate-700/50 rounded-2xl h-[540px] overflow-hidden">
-                          <div className="p-5 border-b border-slate-700/50 bg-slate-900/40 backdrop-blur-md">
-                            <div className="flex items-center justify-between">
-                              <h2 className="text-lg font-semibold text-slate-100 flex items-center gap-2">
-                                <Sparkles className="w-5 h-5 text-indigo-400" />
-                                Interview Flow
-                              </h2>
-                              <span className="text-xs text-slate-400">
-                                Q{currentIdx + 1}/{questions.length}
-                              </span>
-                            </div>
-                            <p className="text-xs text-slate-400 mt-1">
-                              {state === 'ready'
-                                ? 'Pass all system checks to begin recording.'
-                                : rec.status === 'recording'
-                                ? 'Recording in progress... speak your answer.'
-                                : 'Interview in progress.'}
-                            </p>
-                          </div>
-
-                          <div className="p-5 flex-1 overflow-y-auto">
-                            {/* Question Card (visible in both ready preview and recording) */}
-                            {currentQuestion && (
-                              <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-700/50 mb-4">
-                                <div className="flex items-center justify-between mb-2">
-                                  <span className="text-xs uppercase tracking-wider text-indigo-300 font-semibold">
-                                    {currentQuestion.category.replace('_', ' ')}
-                                  </span>
-                                  {state === 'recording' && (
-                                    <button
-                                      onClick={() => {
-                                        cancelSpeech();
-                                        speakQuestion(currentQuestion.text);
-                                      }}
-                                      title="Replay question audio"
-                                      className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-indigo-300 transition-colors"
-                                    >
-                                      <Volume2 className="w-4 h-4" />
-                                    </button>
-                                  )}
-                                </div>
-                                <div className="text-sm text-slate-100 font-medium leading-relaxed">
-                                  {currentQuestion.text}
-                                </div>
+                        {/* ========================================================= */}
+                        {/* 1. Centered System-Readiness Overlay (when state === 'ready') */}
+                        {/* ========================================================= */}
+                        {state === 'ready' && (
+                          <>
+                            {/* Dormant chamber placeholder behind modal */}
+                            <div className="flex-1 flex flex-col items-center justify-center min-h-[480px] p-8 text-center rounded-3xl bg-slate-900/30 border border-slate-800/60 select-none pointer-events-none">
+                              <div className="w-16 h-16 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mb-4">
+                                <Sparkles className="w-8 h-8 text-indigo-400" />
                               </div>
-                            )}
+                              <h3 className="text-xl font-bold text-slate-200">System Readiness Verification</h3>
+                              <p className="text-sm text-slate-400 max-w-md mt-2">
+                                Complete the camera, microphone, and connectivity checks in the overlay to start your mock interview.
+                              </p>
+                            </div>
 
-                            {/* Readiness Panel when in state === 'ready' */}
-                            {state === 'ready' && (
-                              <div className="space-y-4">
-                                <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-700/50">
-                                  <div className="text-xs uppercase tracking-wider text-indigo-300 font-semibold mb-1">
-                                    System Readiness Check
+                            {/* Centered Modal Overlay */}
+                            <div
+                              role="dialog"
+                              aria-modal="true"
+                              aria-labelledby="readiness-overlay-title"
+                              className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-950/85 backdrop-blur-md overflow-y-auto"
+                            >
+                              <div className="w-full max-w-2xl bg-slate-900/95 border border-slate-700/60 rounded-3xl p-6 sm:p-8 shadow-2xl backdrop-blur-xl relative my-auto max-h-[92vh] flex flex-col overflow-hidden">
+                                {/* Header */}
+                                <div className="mb-5 shrink-0">
+                                  <div className="flex items-center justify-between gap-3 mb-1.5">
+                                    <div className="flex items-center gap-2.5">
+                                      <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center">
+                                        <Sparkles className="w-5 h-5 text-indigo-400" />
+                                      </div>
+                                      <h2
+                                        id="readiness-overlay-title"
+                                        className="text-xl sm:text-2xl font-bold text-white tracking-tight"
+                                      >
+                                        Prepare for Your Interview
+                                      </h2>
+                                    </div>
+                                    {currentIdx > 0 && (
+                                      <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                                        Resuming at Question {currentIdx + 1}
+                                      </span>
+                                    )}
                                   </div>
-                                  <p className="text-xs text-slate-400">
-                                    Camera, microphone, face framing, and connectivity are mandatory before starting.
+                                  <p className="text-xs sm:text-sm text-slate-300">
+                                    Complete the required system checks before starting your recorded mock interview.
                                   </p>
                                 </div>
 
-                                <div className="space-y-2.5">
-                                  <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900/40 border border-slate-800">
-                                    <div className="flex items-center gap-2.5">
-                                      <Camera className="w-4 h-4 text-slate-400" />
-                                      <span className="text-xs font-medium text-slate-200">Camera Access</span>
-                                    </div>
-                                    {hasCamera ? (
-                                      <span className="flex items-center gap-1 text-xs text-emerald-400 font-medium">
-                                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> Connected
-                                      </span>
+                                {/* Modal Body (Scrollable if viewport is small) */}
+                                <div className="flex-1 overflow-y-auto pr-1 space-y-4">
+                                  {/* Camera Preview Box */}
+                                  <div className="relative aspect-video w-full rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 shadow-inner group">
+                                    <video
+                                      ref={rec.videoRef}
+                                      playsInline
+                                      muted
+                                      autoPlay
+                                      className="w-full h-full object-cover"
+                                    />
+
+                                    {/* Face Framing Target Overlay when camera is active */}
+                                    {hasLiveCamera ? (
+                                      <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                                        <div
+                                          className={`w-44 h-56 sm:w-52 sm:h-64 rounded-3xl border-2 transition-all flex flex-col justify-between p-3 ${
+                                            faceFramingStatus === 'ready'
+                                              ? 'border-emerald-400/70 bg-emerald-500/5 shadow-[0_0_20px_rgba(16,185,129,0.15)]'
+                                              : 'border-amber-400/80 border-dashed bg-amber-500/5'
+                                          }`}
+                                        >
+                                          <span
+                                            className={`text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded-full self-center ${
+                                              faceFramingStatus === 'ready'
+                                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                                : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                            }`}
+                                          >
+                                            {faceFramingStatus === 'ready'
+                                              ? 'Framed & Centered'
+                                              : 'Position Face in Frame'}
+                                          </span>
+                                          <div className="text-[10px] text-center text-slate-400 bg-black/60 backdrop-blur-sm rounded-lg py-1 px-2">
+                                            Live Camera Preview
+                                          </div>
+                                        </div>
+                                      </div>
                                     ) : (
-                                      <span className="flex items-center gap-1 text-xs text-rose-400 font-medium">
-                                        <XCircle className="w-3.5 h-3.5 text-rose-400" /> Required
-                                      </span>
+                                      <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-xs flex flex-col items-center justify-center p-4 text-center">
+                                        <div className="w-12 h-12 rounded-2xl bg-slate-800/80 border border-slate-700/60 flex items-center justify-center mb-2.5">
+                                          <Camera className="w-6 h-6 text-slate-400" />
+                                        </div>
+                                        <p className="text-sm font-semibold text-slate-200 mb-1">
+                                          Camera preview inactive
+                                        </p>
+                                        <p className="text-xs text-slate-400 max-w-xs">
+                                          Click "Enable Camera & Microphone" below to grant permissions and view your live preview.
+                                        </p>
+                                      </div>
                                     )}
                                   </div>
 
-                                  <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900/40 border border-slate-800">
-                                    <div className="flex items-center gap-2.5">
-                                      <Mic className="w-4 h-4 text-slate-400" />
-                                      <span className="text-xs font-medium text-slate-200">Microphone</span>
+                                  {/* Readiness Checklist Cards */}
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                    {/* Camera Access */}
+                                    <div className="flex items-center justify-between p-3 sm:p-3.5 rounded-xl bg-slate-900/60 border border-slate-800">
+                                      <div className="flex items-center gap-2.5">
+                                        <div className="w-8 h-8 rounded-lg bg-slate-800/80 flex items-center justify-center text-slate-300">
+                                          <Camera className="w-4 h-4" />
+                                        </div>
+                                        <span className="text-xs font-semibold text-slate-200">Camera Access</span>
+                                      </div>
+                                      {rec.status === 'requesting' ? (
+                                        <span className="flex items-center gap-1.5 text-xs text-indigo-400 font-medium">
+                                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking…
+                                        </span>
+                                      ) : hasLiveCamera ? (
+                                        <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-semibold">
+                                          <CheckCircle2 className="w-3.5 h-3.5" /> Ready
+                                        </span>
+                                      ) : rec.status === 'error' ? (
+                                        <span className="flex items-center gap-1.5 text-xs text-rose-400 font-medium">
+                                          <XCircle className="w-3.5 h-3.5" /> Failed
+                                        </span>
+                                      ) : (
+                                        <span className="flex items-center gap-1.5 text-xs text-amber-400 font-medium">
+                                          <AlertCircle className="w-3.5 h-3.5" /> Permission required
+                                        </span>
+                                      )}
                                     </div>
-                                    {hasMic ? (
-                                      <span className="flex items-center gap-1 text-xs text-emerald-400 font-medium">
-                                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> Connected
-                                      </span>
-                                    ) : (
-                                      <span className="flex items-center gap-1 text-xs text-rose-400 font-medium">
-                                        <XCircle className="w-3.5 h-3.5 text-rose-400" /> Required
-                                      </span>
-                                    )}
+
+                                    {/* Microphone Access */}
+                                    <div className="flex items-center justify-between p-3 sm:p-3.5 rounded-xl bg-slate-900/60 border border-slate-800">
+                                      <div className="flex items-center gap-2.5">
+                                        <div className="w-8 h-8 rounded-lg bg-slate-800/80 flex items-center justify-center text-slate-300">
+                                          <Mic className="w-4 h-4" />
+                                        </div>
+                                        <span className="text-xs font-semibold text-slate-200">Microphone Access</span>
+                                      </div>
+                                      {rec.status === 'requesting' ? (
+                                        <span className="flex items-center gap-1.5 text-xs text-indigo-400 font-medium">
+                                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking…
+                                        </span>
+                                      ) : hasLiveMic ? (
+                                        <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-semibold">
+                                          <CheckCircle2 className="w-3.5 h-3.5" /> Ready
+                                        </span>
+                                      ) : rec.status === 'error' ? (
+                                        <span className="flex items-center gap-1.5 text-xs text-rose-400 font-medium">
+                                          <XCircle className="w-3.5 h-3.5" /> Failed
+                                        </span>
+                                      ) : (
+                                        <span className="flex items-center gap-1.5 text-xs text-amber-400 font-medium">
+                                          <AlertCircle className="w-3.5 h-3.5" /> Permission required
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    {/* Face Framing */}
+                                    <div className="flex items-center justify-between p-3 sm:p-3.5 rounded-xl bg-slate-900/60 border border-slate-800">
+                                      <div className="flex items-center gap-2.5">
+                                        <div className="w-8 h-8 rounded-lg bg-slate-800/80 flex items-center justify-center text-slate-300">
+                                          <UserCheck className="w-4 h-4" />
+                                        </div>
+                                        <span className="text-xs font-semibold text-slate-200">Face Framing</span>
+                                      </div>
+                                      {!hasLiveCamera ? (
+                                        <span className="text-xs text-slate-400 font-medium">Not checked</span>
+                                      ) : faceFramingStatus === 'checking' ? (
+                                        <span className="flex items-center gap-1.5 text-xs text-indigo-400 font-medium">
+                                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking…
+                                        </span>
+                                      ) : faceFramingStatus === 'ready' ? (
+                                        <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-semibold">
+                                          <CheckCircle2 className="w-3.5 h-3.5" /> Ready
+                                        </span>
+                                      ) : (
+                                        <span className="flex items-center gap-1.5 text-xs text-amber-400 font-medium">
+                                          <AlertTriangle className="w-3.5 h-3.5" /> Position your face
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    {/* Network Quality */}
+                                    <div className="flex items-center justify-between p-3 sm:p-3.5 rounded-xl bg-slate-900/60 border border-slate-800">
+                                      <div className="flex items-center gap-2.5">
+                                        <div className="w-8 h-8 rounded-lg bg-slate-800/80 flex items-center justify-center text-slate-300">
+                                          <Wifi className="w-4 h-4" />
+                                        </div>
+                                        <span className="text-xs font-semibold text-slate-200">Network Quality</span>
+                                      </div>
+                                      {isOnline ? (
+                                        <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-semibold">
+                                          <CheckCircle2 className="w-3.5 h-3.5" /> Ready
+                                        </span>
+                                      ) : (
+                                        <span className="flex items-center gap-1.5 text-xs text-rose-400 font-medium">
+                                          <XCircle className="w-3.5 h-3.5" /> Network unstable
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    {/* Backend/API Connectivity (Full width) */}
+                                    <div className="sm:col-span-2 flex items-center justify-between p-3 sm:p-3.5 rounded-xl bg-slate-900/60 border border-slate-800">
+                                      <div className="flex items-center gap-2.5">
+                                        <div className="w-8 h-8 rounded-lg bg-slate-800/80 flex items-center justify-center text-slate-300">
+                                          <Server className="w-4 h-4" />
+                                        </div>
+                                        <div>
+                                          <span className="text-xs font-semibold text-slate-200 block">
+                                            Backend/API Connectivity
+                                          </span>
+                                          <span className="text-[10px] text-slate-400">
+                                            Speech & AI evaluation service availability
+                                          </span>
+                                        </div>
+                                      </div>
+                                      {backendStatus === 'checking' ? (
+                                        <span className="flex items-center gap-1.5 text-xs text-indigo-400 font-medium">
+                                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking…
+                                        </span>
+                                      ) : backendStatus === 'connected' ? (
+                                        <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-semibold">
+                                          <CheckCircle2 className="w-3.5 h-3.5" /> Ready
+                                        </span>
+                                      ) : (
+                                        <span className="flex items-center gap-1.5 text-xs text-rose-400 font-medium">
+                                          <XCircle className="w-3.5 h-3.5" /> Failed
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
 
-                                  <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900/40 border border-slate-800">
-                                    <div className="flex items-center gap-2.5">
-                                      <UserCheck className="w-4 h-4 text-slate-400" />
-                                      <span className="text-xs font-medium text-slate-200">Face Framing</span>
+                                  {/* Error & Guidance Alerts */}
+                                  {rec.error && (
+                                    <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2.5">
+                                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
+                                      <div className="space-y-1">
+                                        <p className="font-semibold text-rose-200">Device Access Issue</p>
+                                        <p>{rec.error}</p>
+                                        <p className="text-rose-300/80">
+                                          Please check that camera & mic permissions are allowed in your browser settings (look for the lock or camera icon in the address bar), then click Retry Checks.
+                                        </p>
+                                      </div>
                                     </div>
-                                    {hasFaceDetected ? (
-                                      <span className="flex items-center gap-1 text-xs text-emerald-400 font-medium">
-                                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> Detected
-                                      </span>
-                                    ) : (
-                                      <span className="flex items-center gap-1 text-xs text-amber-400 font-medium">
-                                        <XCircle className="w-3.5 h-3.5 text-amber-400" /> Position Face
-                                      </span>
-                                    )}
-                                  </div>
+                                  )}
 
-                                  <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900/40 border border-slate-800">
-                                    <div className="flex items-center gap-2.5">
-                                      <Wifi className="w-4 h-4 text-slate-400" />
-                                      <span className="text-xs font-medium text-slate-200">Network Quality</span>
+                                  {!rec.error && backendStatus === 'error' && (
+                                    <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2.5">
+                                      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
+                                      <div>
+                                        <span className="font-semibold block text-rose-200 mb-0.5">
+                                          Backend Service Unavailable
+                                        </span>
+                                        Cannot reach the interview analysis backend API. Please ensure the backend is running and click Retry Checks.
+                                      </div>
                                     </div>
-                                    {isOnline ? (
-                                      <span className="flex items-center gap-1 text-xs text-emerald-400 font-medium">
-                                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> Stable
-                                      </span>
-                                    ) : (
-                                      <span className="flex items-center gap-1 text-xs text-rose-400 font-medium">
-                                        <XCircle className="w-3.5 h-3.5 text-rose-400" /> Offline
-                                      </span>
-                                    )}
-                                  </div>
+                                  )}
+
+                                  {!rec.error && hasLiveCamera && faceFramingStatus === 'position_face' && (
+                                    <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5">
+                                      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+                                      <div>
+                                        <span className="font-semibold block text-amber-200 mb-0.5">
+                                          Position Face in Camera Frame
+                                        </span>
+                                        Please position your face directly inside the camera guide box to ensure eye contact and framing analysis succeed.
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {error && !rec.error && (
+                                    <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2.5">
+                                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
+                                      <div>{error}</div>
+                                    </div>
+                                  )}
                                 </div>
 
-                                <div className="pt-2 flex flex-col gap-2">
-                                  {(!hasCamera || !hasMic) && (
+                                {/* Modal Actions Footer */}
+                                <div className="mt-5 pt-4 border-t border-slate-800 shrink-0 flex flex-col sm:flex-row items-center gap-3">
+                                  {!hasLiveCamera || !hasLiveMic ? (
                                     <button
                                       onClick={() => void rec.initCamera()}
                                       disabled={rec.status === 'requesting'}
-                                      className="w-full px-4 py-2.5 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-medium border border-slate-600 transition-colors"
+                                      className="w-full sm:flex-1 px-5 py-3 rounded-xl bg-gradient-to-r from-primary to-accent hover:shadow-primary/40 text-white font-semibold shadow-lg shadow-primary/25 transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-sm sm:text-base cursor-pointer"
                                     >
-                                      {rec.status === 'requesting' ? 'Requesting Media Access…' : 'Enable Camera & Microphone'}
+                                      {rec.status === 'requesting' ? (
+                                        <>
+                                          <Loader2 className="w-4 h-4 animate-spin" />
+                                          Requesting Media Access…
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Camera className="w-4 h-4" />
+                                          Enable Camera & Microphone
+                                        </>
+                                      )}
+                                    </button>
+                                  ) : (
+                                    <button
+                                      onClick={() => void handleStartInterview(rec)}
+                                      disabled={!allReadinessPassed || isStartingInterview}
+                                      className="w-full sm:flex-1 px-5 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white font-bold shadow-lg shadow-emerald-500/25 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm sm:text-base cursor-pointer"
+                                    >
+                                      {isStartingInterview ? (
+                                        <>
+                                          <Loader2 className="w-4 h-4 animate-spin" />
+                                          Starting Interview…
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Sparkles className="w-4 h-4" />
+                                          Start Interview
+                                        </>
+                                      )}
                                     </button>
                                   )}
 
-                                  <button
-                                    onClick={async () => {
-                                      const ok = await rec.initCamera();
-                                      if (ok !== false) {
-                                        setState('recording');
-                                        rec.startRecording();
-                                      }
-                                    }}
-                                    disabled={rec.status === 'requesting' || !allReadinessPassed}
-                                    className="w-full px-5 py-3 rounded-xl bg-gradient-to-r from-primary to-accent text-white font-semibold shadow-lg shadow-primary/25 hover:shadow-primary/40 hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:hover:translate-y-0"
-                                  >
-                                    {rec.status === 'requesting' ? 'Requesting access…' : 'Start Interview Recording'}
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Active Question Controls during recording */}
-                            {(state === 'recording' || state === 'waiting_stop') && currentQuestion && (
-                              <div className="space-y-4">
-
-                                <div className="grid grid-cols-2 gap-3">
-                                  {canStartAnswer && (
+                                  {(rec.error || backendStatus === 'error' || !isOnline) && (
                                     <button
-                                      onClick={() => updateWindow(currentQuestion.id, { startMs: Date.now() })}
-                                      className="px-4 py-3 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30 font-semibold transition-colors"
+                                      onClick={() => void handleRetryChecks(rec)}
+                                      className="w-full sm:w-auto px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition-colors flex items-center justify-center gap-2 cursor-pointer"
                                     >
-                                      Start Answer
-                                    </button>
-                                  )}
-
-                                  {canStopAnswer && (
-                                    <button
-                                      onClick={() => updateWindow(currentQuestion.id, { endMs: Date.now() })}
-                                      className="px-4 py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-semibold border border-slate-600 transition-colors"
-                                    >
-                                      Stop Answer
-                                    </button>
-                                  )}
-
-                                  {/* Skip Question Button */}
-                                  <button
-                                    onClick={handleSkipQuestion}
-                                    className={`${canStartAnswer || canStopAnswer ? '' : 'col-span-2'} px-4 py-3 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-700 font-medium transition-colors flex items-center justify-center gap-1.5`}
-                                  >
-                                    <SkipForward className="w-4 h-4" />
-                                    Skip Question
-                                  </button>
-
-                                  {/* Next Question */}
-                                  {canGoNext && currentIdx < questions.length - 1 && (
-                                    <button
-                                      onClick={handleNextQuestion}
-                                      className="col-span-2 px-4 py-3 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 border border-indigo-500/30 font-semibold transition-colors"
-                                    >
-                                      Next Question
-                                    </button>
-                                  )}
-
-                                  {/* Finish Interview */}
-                                  {canGoNext && currentIdx === questions.length - 1 && (
-                                    <button
-                                      onClick={() => {
-                                        cancelSpeech();
-                                        setState('waiting_stop');
-                                        rec.stopRecording();
-                                      }}
-                                      className="col-span-2 px-4 py-3 rounded-xl bg-gradient-to-r from-primary to-accent text-white font-semibold shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-all"
-                                    >
-                                      Finish Interview
+                                      <RotateCcw className="w-3.5 h-3.5" />
+                                      Retry Checks
                                     </button>
                                   )}
                                 </div>
-
-                                <div className="text-xs text-slate-400">
-                                  Tip: Click "Start Answer" when ready to speak, "Stop Answer" when done, or "Skip Question" to pass.
-                                </div>
-                              </div>
-                            )}
-                          </div>
-
-                          {(rec.status === 'recording' || state === 'recording') && (
-                            <div className="p-5 border-t border-slate-700/50 bg-slate-900/30">
-                              <div className="flex items-center justify-between text-xs text-slate-300">
-                                <span>Recording time</span>
-                                <span className="font-mono">{Math.floor(rec.duration)}s</span>
                               </div>
                             </div>
-                          )}
-                        </div>
+                          </>
+                        )}
+
+                        {/* ========================================================= */}
+                        {/* 2. Active Interview Layout (recording & waiting_stop)     */}
+                        {/* ========================================================= */}
+                        {(state === 'recording' || state === 'waiting_stop') && (
+                          <>
+                            <div className="flex-1 min-w-0">
+                              <WebcamMonitor
+                                videoRef={rec.videoRef}
+                                status={rec.status}
+                                error={rec.error}
+                                initCameraLabel="Enable Camera & Microphone"
+                                onInitCamera={rec.initCamera}
+                              />
+                            </div>
+
+                            <div className="w-full lg:w-96 flex flex-col bg-slate-800/30 border border-slate-700/50 rounded-2xl h-[540px] overflow-hidden">
+                              <div className="p-5 border-b border-slate-700/50 bg-slate-900/40 backdrop-blur-md">
+                                <div className="flex items-center justify-between">
+                                  <h2 className="text-lg font-semibold text-slate-100 flex items-center gap-2">
+                                    <Sparkles className="w-5 h-5 text-indigo-400" />
+                                    Interview Flow
+                                  </h2>
+                                  <span className="text-xs text-slate-400">
+                                    Q{currentIdx + 1}/{questions.length}
+                                  </span>
+                                </div>
+                                <p className="text-xs text-slate-400 mt-1">
+                                  {rec.status === 'recording'
+                                    ? 'Recording in progress... speak your answer.'
+                                    : 'Interview in progress.'}
+                                </p>
+                              </div>
+
+                              <div className="p-5 flex-1 overflow-y-auto">
+                                {/* Question Card */}
+                                {currentQuestion && (
+                                  <div className="p-4 rounded-xl bg-slate-900/40 border border-slate-700/50 mb-4">
+                                    <div className="flex items-center justify-between mb-2">
+                                      <span className="text-xs uppercase tracking-wider text-indigo-300 font-semibold">
+                                        {currentQuestion.category.replace('_', ' ')}
+                                      </span>
+                                      <button
+                                        onClick={() => {
+                                          cancelSpeech();
+                                          speakQuestion(currentQuestion.text);
+                                        }}
+                                        title="Replay question audio"
+                                        className="p-1 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-indigo-300 transition-colors"
+                                      >
+                                        <Volume2 className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                    <div className="text-sm text-slate-100 font-medium leading-relaxed">
+                                      {currentQuestion.text}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Active Question Controls */}
+                                {currentQuestion && (
+                                  <div className="space-y-4">
+                                    <div className="grid grid-cols-2 gap-3">
+                                      {canStartAnswer && (
+                                        <button
+                                          onClick={() =>
+                                            updateWindow(currentQuestion.id, { startMs: Date.now() })
+                                          }
+                                          className="px-4 py-3 rounded-xl bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30 font-semibold transition-colors"
+                                        >
+                                          Start Answer
+                                        </button>
+                                      )}
+
+                                      {canStopAnswer && (
+                                        <button
+                                          onClick={() =>
+                                            updateWindow(currentQuestion.id, { endMs: Date.now() })
+                                          }
+                                          className="px-4 py-3 rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-semibold border border-slate-600 transition-colors"
+                                        >
+                                          Stop Answer
+                                        </button>
+                                      )}
+
+                                      {/* Skip Question Button */}
+                                      <button
+                                        onClick={handleSkipQuestion}
+                                        className={`${
+                                          canStartAnswer || canStopAnswer ? '' : 'col-span-2'
+                                        } px-4 py-3 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 border border-slate-700 font-medium transition-colors flex items-center justify-center gap-1.5`}
+                                      >
+                                        <SkipForward className="w-4 h-4" />
+                                        Skip Question
+                                      </button>
+
+                                      {/* Next Question */}
+                                      {canGoNext && currentIdx < questions.length - 1 && (
+                                        <button
+                                          onClick={handleNextQuestion}
+                                          className="col-span-2 px-4 py-3 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-200 border border-indigo-500/30 font-semibold transition-colors"
+                                        >
+                                          Next Question
+                                        </button>
+                                      )}
+
+                                      {/* Finish Interview */}
+                                      {canGoNext && currentIdx === questions.length - 1 && (
+                                        <button
+                                          onClick={() => {
+                                            cancelSpeech();
+                                            setState('waiting_stop');
+                                            rec.stopRecording();
+                                          }}
+                                          className="col-span-2 px-4 py-3 rounded-xl bg-gradient-to-r from-primary to-accent text-white font-semibold shadow-lg shadow-primary/25 hover:shadow-primary/40 transition-all"
+                                        >
+                                          Finish Interview
+                                        </button>
+                                      )}
+                                    </div>
+
+                                    <div className="text-xs text-slate-400">
+                                      Tip: Click "Start Answer" when ready to speak, "Stop Answer" when done, or "Skip Question" to pass.
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="p-5 border-t border-slate-700/50 bg-slate-900/30">
+                                <div className="flex items-center justify-between text-xs text-slate-300">
+                                  <span>Recording time</span>
+                                  <span className="font-mono">{Math.floor(rec.duration)}s</span>
+                                </div>
+                              </div>
+                            </div>
+                          </>
+                        )}
                       </>
                     );
                   }}
