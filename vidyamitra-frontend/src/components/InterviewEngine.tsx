@@ -202,7 +202,7 @@ export default function InterviewEngine() {
                 if (!cancelled) setFaceFramingStatus('position_face');
               }
             } catch {
-              if (!cancelled) setFaceFramingStatus('ready');
+              if (!cancelled) setFaceFramingStatus('position_face');
             }
           }
         };
@@ -213,7 +213,7 @@ export default function InterviewEngine() {
         setFaceFramingStatus('ready');
       }
     } else {
-      setFaceFramingStatus('ready');
+      setFaceFramingStatus('position_face');
     }
 
     return () => {
@@ -515,14 +515,8 @@ export default function InterviewEngine() {
 
     try {
       const liveStream = rec.stream;
-      const hasCam =
-        rec.status === 'ready' ||
-        rec.status === 'recording' ||
-        (!!liveStream && liveStream.getVideoTracks().some((t) => t.readyState === 'live' && t.enabled));
-      const hasAudio =
-        rec.status === 'ready' ||
-        rec.status === 'recording' ||
-        (!!liveStream && liveStream.getAudioTracks().some((t) => t.readyState === 'live' && t.enabled));
+      const hasCam = !!liveStream && liveStream.getVideoTracks().some((t) => t.readyState === 'live' && t.enabled);
+      const hasAudio = !!liveStream && liveStream.getAudioTracks().some((t) => t.readyState === 'live' && t.enabled);
 
       if (!hasCam || !hasAudio) {
         setError('Camera and microphone tracks are inactive. Please enable them to proceed.');
@@ -534,18 +528,9 @@ export default function InterviewEngine() {
         return;
       }
 
-      if (backendStatus === 'error') {
+      if (backendStatus !== 'connected') {
         setError('Backend service is unreachable. Please retry checks.');
         return;
-      }
-
-      // If still checking, re-attempt once synchronously before gating
-      if (backendStatus === 'checking') {
-        const ok = await checkBackendConnectivity();
-        if (!ok) {
-          setError('Backend service is unreachable. Please retry checks.');
-          return;
-        }
       }
 
       if (faceFramingStatus !== 'ready') {
@@ -844,22 +829,17 @@ export default function InterviewEngine() {
                 <VoiceRecorder onRecordingComplete={onSessionRecordingComplete}>
                   {(rec) => {
                     const hasLiveCamera =
-                      rec.status === 'ready' ||
-                      rec.status === 'recording' ||
-                      (!!rec.stream &&
-                        rec.stream.getVideoTracks().length > 0 &&
-                        rec.stream.getVideoTracks().some((t) => t.readyState === 'live' && t.enabled));
+                      !!rec.stream &&
+                      rec.stream.getVideoTracks().length > 0 &&
+                      rec.stream.getVideoTracks().some((t) => t.readyState === 'live' && t.enabled);
 
                     const hasLiveMic =
-                      rec.status === 'ready' ||
-                      rec.status === 'recording' ||
-                      (!!rec.stream &&
-                        rec.stream.getAudioTracks().length > 0 &&
-                        rec.stream.getAudioTracks().some((t) => t.readyState === 'live' && t.enabled));
+                      !!rec.stream &&
+                      rec.stream.getAudioTracks().length > 0 &&
+                      rec.stream.getAudioTracks().some((t) => t.readyState === 'live' && t.enabled);
 
                     const isFaceFramed = !hasLiveCamera ? false : faceFramingStatus === 'ready';
-                    // Accept 'checking' as not-yet-failed — handleStartInterview will re-check if needed
-                    const isBackendReady = backendStatus === 'connected' || backendStatus === 'checking';
+                    const isBackendReady = backendStatus === 'connected';
 
                     const allReadinessPassed =
                       isOnline && hasLiveCamera && hasLiveMic && isFaceFramed && isBackendReady;
