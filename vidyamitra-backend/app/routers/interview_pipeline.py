@@ -182,6 +182,7 @@ class AnswerWindow(BaseModel):
     question_id: str
     start_offset_seconds: float
     end_offset_seconds: float
+    is_skipped: bool = False
 
 
 class RecordInterviewResponse(BaseModel):
@@ -345,6 +346,8 @@ async def record_interview(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid answer_windows: {str(e)}")
 
+    all_skipped = all(w.is_skipped for w in windows)
+
     if not windows:
         raise HTTPException(status_code=400, detail="answer_windows cannot be empty.")
 
@@ -364,8 +367,8 @@ async def record_interview(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to read upload: {str(e)}")
 
-    if len(video_bytes) == 0 or len(audio_bytes) == 0:
-        raise HTTPException(status_code=400, detail="Uploaded media cannot be empty.")
+    if not all_skipped and (len(video_bytes) == 0 or len(audio_bytes) == 0):
+        raise HTTPException(status_code=400, detail="Uploaded media cannot be empty if questions were answered.")
 
     video_path.write_bytes(video_bytes)
     audio_path.write_bytes(audio_bytes)
@@ -531,6 +534,21 @@ async def analyze_interview(session_id: str = Form(...), user_id: Optional[str] 
     per_question: List[dict] = []
     for w in answer_windows:
         qid = w.get("question_id")
+
+        if w.get("is_skipped", False):
+            per_question.append({
+                "question_id": qid,
+                "answer_start_offset_seconds": 0.0,
+                "answer_end_offset_seconds": 0.0,
+                "transcript_excerpt": "[SKIPPED]",
+                "filler_word_count": 0,
+                "top_fillers": [],
+                "eye_contact_ratio": 0.0,
+                "words_in_window_count": 0,
+                "is_skipped": True,
+            })
+            continue
+
         start_o = float(w.get("start_offset_seconds", 0.0) or 0.0)
         end_o = float(w.get("end_offset_seconds", 0.0) or 0.0)
 
@@ -565,6 +583,7 @@ async def analyze_interview(session_id: str = Form(...), user_id: Optional[str] 
                 "eye_contact_ratio": round(eye_ratio, 3),
                 # These are lightweight heuristics; final scoring is AI in /report.
                 "words_in_window_count": len(words_in_window),
+                "is_skipped": False,
             }
         )
 
@@ -675,6 +694,20 @@ async def generate_report(
     async def eval_single_answer(item: dict) -> dict:
         qid = item.get("question_id")
         qid_str = str(qid) if qid is not None else ""
+
+        if item.get("is_skipped", False):
+            return {
+                "question_id": qid_str,
+                "score": 0,
+                "confidence": 0,
+                "scores": {"technical": 0, "communication": 0, "confidence": 0},
+                "feedback": "Question skipped.",
+                "improvements": [],
+                "better_response": "",
+                "ideal_answer": "",
+                "is_skipped": True,
+            }
+
         q = q_by_id.get(qid) or {}
         question_text = _truncate(q.get("text", ""), 300)
 
@@ -775,6 +808,7 @@ Return strictly valid JSON (keep text fields concise, max 3-4 sentences each):
                 "improvements": improvements_val,
                 "better_response": _truncate(better_response, 600) if isinstance(better_response, str) else "",
                 "ideal_answer": _truncate(ideal_answer, 600) if isinstance(ideal_answer, str) else "",
+                "is_skipped": False,
             }
         except Exception:
             return {
@@ -786,6 +820,7 @@ Return strictly valid JSON (keep text fields concise, max 3-4 sentences each):
                 "improvements": [],
                 "better_response": "",
                 "ideal_answer": "",
+                "is_skipped": False,
             }
 
     # Evaluate answers concurrently.
@@ -798,14 +833,20 @@ Return strictly valid JSON (keep text fields concise, max 3-4 sentences each):
     # =========================================================================
 
     # Compute deterministic overall scores from per-question results
-    all_tech = [e.get("scores", {}).get("technical", 0) for e in individual_evaluations]
-    all_comm = [e.get("scores", {}).get("communication", 0) for e in individual_evaluations]
-    all_conf = [e.get("scores", {}).get("confidence", 0) for e in individual_evaluations]
+    # Skip questions marked as skipped so they don't drag down averages.
+    answered_evaluations = [e for e in individual_evaluations if not e.get("is_skipped", False)]
+
+    all_tech = [e.get("scores", {}).get("technical", 0) for e in answered_evaluations]
+    all_comm = [e.get("scores", {}).get("communication", 0) for e in answered_evaluations]
+    all_conf = [e.get("scores", {}).get("confidence", 0) for e in answered_evaluations]
 
     avg_tech = int(round(sum(all_tech) / max(len(all_tech), 1)))
     avg_comm = int(round(sum(all_comm) / max(len(all_comm), 1)))
     avg_conf = int(round(sum(all_conf) / max(len(all_conf), 1)))
     deterministic_final = int(round((avg_tech + avg_comm + avg_conf) / 3))
+
+    skipped_count = len(individual_evaluations) - len(answered_evaluations)
+    answered_count = len(answered_evaluations)
 
     # Prepare compact evaluation summary for the second LLM call
     compact_evals = []
@@ -827,7 +868,7 @@ Return strictly valid JSON (keep text fields concise, max 3-4 sentences each):
 
     summary_prompt = f"""You are a career coach writing an interview summary.
 
-Overall computed scores:
+Overall computed scores (averaged over {answered_count} answered questions; {skipped_count} skipped):
 - Technical: {avg_tech}/100
 - Communication: {avg_comm}/100
 - Confidence: {avg_conf}/100
@@ -906,6 +947,8 @@ Schema:
         raw_start = float(meta.get("answer_start_offset_seconds", 0) or 0)
         buffered_start = max(0.0, raw_start - 1.0)
 
+        is_skipped = bool(meta.get("is_skipped", item.get("is_skipped", False)))
+
         per_q_feedback.append(
             {
                 "question_id": qid,
@@ -916,11 +959,12 @@ Schema:
                 "improvements": item.get("improvements", []),
                 "better_response": item.get("better_response", ""),
                 "ideal_answer": item.get("ideal_answer", ""),
-                "answer_start_offset_seconds": buffered_start,
-                "answer_end_offset_seconds": float(meta.get("answer_end_offset_seconds", 0) or 0),
+                "answer_start_offset_seconds": buffered_start if not is_skipped else None,
+                "answer_end_offset_seconds": float(meta.get("answer_end_offset_seconds", 0) or 0) if not is_skipped else None,
                 "transcript_excerpt": _truncate(meta.get("transcript_excerpt", ""), 500),
                 "eye_contact_ratio": meta.get("eye_contact_ratio", 0),
                 "filler_word_count": meta.get("filler_word_count", 0),
+                "is_skipped": is_skipped,
             }
         )
 
@@ -945,6 +989,9 @@ Schema:
         "skill_gap_analysis": skill_gap_analysis,
         "per_question_feedback": per_q_feedback,
         "timeline": analysis.get("timeline", []),
+        "questions_answered": answered_count,
+        "questions_skipped": skipped_count,
+        "questions_total": len(questions),
     }
 
     session["report"] = interview_report

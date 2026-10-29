@@ -324,6 +324,7 @@ export default function InterviewEngine() {
           question_id: w.question_id,
           start_offset_seconds: 0,
           end_offset_seconds: 0,
+          is_skipped: true,
         };
       }
       const start_offset_seconds =

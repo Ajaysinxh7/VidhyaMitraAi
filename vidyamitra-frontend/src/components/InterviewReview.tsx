@@ -44,10 +44,11 @@ export interface PerQuestionFeedbackItem {
   better_response?: string;
   ideal_answer?: string;
   transcript_excerpt?: string;
-  answer_start_offset_seconds?: number;
-  answer_end_offset_seconds?: number;
+  answer_start_offset_seconds?: number | null;
+  answer_end_offset_seconds?: number | null;
   filler_word_count?: number;
   eye_contact_ratio?: number;
+  is_skipped?: boolean;
 }
 
 export interface SkillGapItem {
@@ -394,16 +395,29 @@ export default function InterviewReview({
     return map;
   }, [questions]);
 
-  // Build answer regions for the scrubber (Q1, Q2, ... markers)
+  // Build answer regions for the scrubber (Q1, Q2, ... markers).
+  // Skipped questions get no region (zero-length windows are excluded).
   const answerRegions = useMemo(() => {
-    return feedbackItems.map((item, idx) => ({
-      qIndex: idx + 1,
-      qid: item.question_id,
-      start: item.answer_start_offset_seconds ?? 0,
-      end: item.answer_end_offset_seconds ?? 0,
-      score: item.score ?? 0,
-    }));
+    return feedbackItems
+      .filter((item) => !item.is_skipped && (item.answer_start_offset_seconds ?? null) !== null)
+      .map((item, idx) => ({
+        qIndex: idx + 1,
+        qid: item.question_id,
+        start: item.answer_start_offset_seconds ?? 0,
+        end: item.answer_end_offset_seconds ?? 0,
+        score: item.score ?? 0,
+      }));
   }, [feedbackItems]);
+
+  // Canonical answered/skipped counts (skipped status flows from backend report).
+  const answeredCount = useMemo(
+    () => feedbackItems.filter((item) => !item.is_skipped).length,
+    [feedbackItems]
+  );
+  const skippedCount = useMemo(
+    () => feedbackItems.filter((item) => item.is_skipped).length,
+    [feedbackItems]
+  );
 
   // Safe duration for percentage calculations (avoid division by zero / Infinity)
   const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : 1;
@@ -573,9 +587,9 @@ export default function InterviewReview({
 
               <div className="flex items-center gap-2">
                 {/* Answer count badge */}
-                {answerRegions.length > 0 && (
+                {feedbackItems.length > 0 && (
                   <span className="text-[10px] px-2 py-1 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 font-medium">
-                    {answerRegions.length} answers
+                    {answeredCount} answered · {skippedCount} skipped
                   </span>
                 )}
 
