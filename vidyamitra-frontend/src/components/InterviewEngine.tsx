@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Loader2, AlertTriangle, Volume2, Sparkles, History, ArrowLeft, Award, Calendar, RotateCcw, CheckCircle2, XCircle, Camera, Mic, Wifi, UserCheck, SkipForward, Server, AlertCircle } from 'lucide-react';
+import { Loader2, AlertTriangle, Volume2, Sparkles, History, ArrowLeft, Award, Calendar, RotateCcw, CheckCircle2, XCircle, Camera, Mic, Wifi, SkipForward, Server, AlertCircle } from 'lucide-react';
 
 import { useAppContext } from '../contexts/AppContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -169,57 +169,6 @@ export default function InterviewEngine() {
       void checkBackendConnectivity();
     }
   }, [state, checkBackendConnectivity]);
-
-  // Face Framing Detection Loop when in ready state
-  useEffect(() => {
-    if (state !== 'ready') {
-      setFaceFramingStatus('not_checked');
-      return;
-    }
-
-    let cancelled = false;
-    let intervalId: any = null;
-
-    if (typeof window !== 'undefined' && 'FaceDetector' in window) {
-      try {
-        const detector = new (window as any).FaceDetector({ fastMode: true, maxDetectedFaces: 2 });
-        const checkFace = async () => {
-          if (cancelled) return;
-          const videoEl = document.querySelector('video');
-          if (videoEl && videoEl.readyState >= 2) {
-            try {
-              const faces = await detector.detect(videoEl);
-              if (faces && faces.length > 0) {
-                const box = faces[0].boundingBox;
-                const cx = box.x + box.width / 2;
-                const cy = box.y + box.height / 2;
-                const vw = videoEl.videoWidth || 640;
-                const vh = videoEl.videoHeight || 480;
-                const isCentered = cx > vw * 0.25 && cx < vw * 0.75 && cy > vh * 0.2 && cy < vh * 0.8;
-                if (!cancelled) setFaceFramingStatus(isCentered ? 'ready' : 'position_face');
-              } else {
-                if (!cancelled) setFaceFramingStatus('position_face');
-              }
-            } catch {
-              if (!cancelled) setFaceFramingStatus('position_face');
-            }
-          }
-        };
-
-        intervalId = setInterval(checkFace, 600);
-        void checkFace();
-      } catch {
-        setFaceFramingStatus('position_face');
-      }
-    } else {
-      setFaceFramingStatus('position_face');
-    }
-
-    return () => {
-      cancelled = true;
-      if (intervalId) clearInterval(intervalId);
-    };
-  }, [state]);
 
   const isRecordingActive = state === 'recording';
   const currentQuestion = questions[currentIdx];
@@ -532,11 +481,6 @@ export default function InterviewEngine() {
         return;
       }
 
-      if (faceFramingStatus !== 'ready') {
-        setError('Please position your face properly within the camera guide before starting.');
-        return;
-      }
-
       setState('recording');
       rec.startRecording();
     } catch (err: any) {
@@ -581,7 +525,6 @@ export default function InterviewEngine() {
     setReport(null);
     setError(null);
     setResumedBannerVisible(false);
-    setFaceFramingStatus('not_checked');
   };
 
   return (
@@ -837,11 +780,10 @@ export default function InterviewEngine() {
                       rec.stream.getAudioTracks().length > 0 &&
                       rec.stream.getAudioTracks().some((t) => t.readyState === 'live' && t.enabled);
 
-                    const isFaceFramed = !hasLiveCamera ? false : faceFramingStatus === 'ready';
                     const isBackendReady = backendStatus === 'connected';
 
                     const allReadinessPassed =
-                      isOnline && hasLiveCamera && hasLiveMic && isFaceFramed && isBackendReady;
+                      isOnline && hasLiveCamera && hasLiveMic && isBackendReady;
 
                     return (
                       <>
@@ -905,46 +847,6 @@ export default function InterviewEngine() {
                                       autoPlay
                                       className="w-full h-full object-cover"
                                     />
-
-                                    {/* Face Framing Target Overlay when camera is active */}
-                                    {hasLiveCamera ? (
-                                      <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                                        <div
-                                          className={`w-44 h-56 sm:w-52 sm:h-64 rounded-3xl border-2 transition-all flex flex-col justify-between p-3 ${
-                                            faceFramingStatus === 'ready'
-                                              ? 'border-emerald-400/70 bg-emerald-500/5 shadow-[0_0_20px_rgba(16,185,129,0.15)]'
-                                              : 'border-amber-400/80 border-dashed bg-amber-500/5'
-                                          }`}
-                                        >
-                                          <span
-                                            className={`text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded-full self-center ${
-                                              faceFramingStatus === 'ready'
-                                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                                                : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                                            }`}
-                                          >
-                                            {faceFramingStatus === 'ready'
-                                              ? 'Framed & Centered'
-                                              : 'Position Face in Frame'}
-                                          </span>
-                                          <div className="text-[10px] text-center text-slate-400 bg-black/60 backdrop-blur-sm rounded-lg py-1 px-2">
-                                            Live Camera Preview
-                                          </div>
-                                        </div>
-                                      </div>
-                                    ) : (
-                                      <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-xs flex flex-col items-center justify-center p-4 text-center">
-                                        <div className="w-12 h-12 rounded-2xl bg-slate-800/80 border border-slate-700/60 flex items-center justify-center mb-2.5">
-                                          <Camera className="w-6 h-6 text-slate-400" />
-                                        </div>
-                                        <p className="text-sm font-semibold text-slate-200 mb-1">
-                                          Camera preview inactive
-                                        </p>
-                                        <p className="text-xs text-slate-400 max-w-xs">
-                                          Click "Enable Camera & Microphone" below to grant permissions and view your live preview.
-                                        </p>
-                                      </div>
-                                    )}
                                   </div>
 
                                   {/* Readiness Checklist Cards */}
@@ -999,31 +901,6 @@ export default function InterviewEngine() {
                                       ) : (
                                         <span className="flex items-center gap-1.5 text-xs text-amber-400 font-medium">
                                           <AlertCircle className="w-3.5 h-3.5" /> Permission required
-                                        </span>
-                                      )}
-                                    </div>
-
-                                    {/* Face Framing */}
-                                    <div className="flex items-center justify-between p-3 sm:p-3.5 rounded-xl bg-slate-900/60 border border-slate-800">
-                                      <div className="flex items-center gap-2.5">
-                                        <div className="w-8 h-8 rounded-lg bg-slate-800/80 flex items-center justify-center text-slate-300">
-                                          <UserCheck className="w-4 h-4" />
-                                        </div>
-                                        <span className="text-xs font-semibold text-slate-200">Face Framing</span>
-                                      </div>
-                                      {!hasLiveCamera ? (
-                                        <span className="text-xs text-slate-400 font-medium">Not checked</span>
-                                      ) : faceFramingStatus === 'checking' ? (
-                                        <span className="flex items-center gap-1.5 text-xs text-indigo-400 font-medium">
-                                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking…
-                                        </span>
-                                      ) : faceFramingStatus === 'ready' ? (
-                                        <span className="flex items-center gap-1.5 text-xs text-emerald-400 font-semibold">
-                                          <CheckCircle2 className="w-3.5 h-3.5" /> Ready
-                                        </span>
-                                      ) : (
-                                        <span className="flex items-center gap-1.5 text-xs text-amber-400 font-medium">
-                                          <AlertTriangle className="w-3.5 h-3.5" /> Position your face
                                         </span>
                                       )}
                                     </div>
@@ -1100,18 +977,6 @@ export default function InterviewEngine() {
                                           Backend Service Unavailable
                                         </span>
                                         Cannot reach the interview analysis backend API. Please ensure the backend is running and click Retry Checks.
-                                      </div>
-                                    </div>
-                                  )}
-
-                                  {!rec.error && hasLiveCamera && faceFramingStatus === 'position_face' && (
-                                    <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5">
-                                      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
-                                      <div>
-                                        <span className="font-semibold block text-amber-200 mb-0.5">
-                                          Position Face in Camera Frame
-                                        </span>
-                                        Please position your face directly inside the camera guide box to ensure eye contact and framing analysis succeed.
                                       </div>
                                     </div>
                                   )}
