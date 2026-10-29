@@ -210,7 +210,7 @@ export default function InterviewEngine() {
         intervalId = setInterval(checkFace, 600);
         void checkFace();
       } catch {
-        setFaceFramingStatus('ready');
+        setFaceFramingStatus('position_face');
       }
     } else {
       setFaceFramingStatus('position_face');
