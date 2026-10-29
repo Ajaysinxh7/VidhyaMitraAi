@@ -130,7 +130,6 @@ export default function InterviewEngine() {
   // System readiness and gating states
   const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'error'>('checking');
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
-  const [faceFramingStatus, setFaceFramingStatus] = useState<'not_checked' | 'checking' | 'position_face' | 'ready'>('not_checked');
   const [isStartingInterview, setIsStartingInterview] = useState(false);
   const isStartingInterviewRef = useRef(false);
 
