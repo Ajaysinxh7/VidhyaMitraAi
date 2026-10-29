@@ -52,6 +52,30 @@ def _save_store(store: Dict[str, dict]) -> None:
         pass
 
 
+def _get_session(session_id: str, user_id: str) -> Optional[dict]:
+    """Hydrate session from local store or Supabase (durable fallback)."""
+    # 1. Try local memory store
+    store = _load_store()
+    if session_id in store:
+        s = store[session_id]
+        if str(s.get("user_id")) == str(user_id):
+            return s
+
+    # 2. Try Supabase
+    if supabase:
+        try:
+            res = supabase.table("interview_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+            if res.data:
+                session_data = res.data[0]
+                # Sync back to local store for subsequent operations
+                store[session_id] = session_data
+                _save_store(store)
+                return session_data
+        except Exception:
+            pass
+    return None
+
+
 def _as_safe_words_text(tokens: List[str]) -> str:
     """
     Join word tokens into a readable transcript.
@@ -333,12 +357,11 @@ async def record_interview(
     video: UploadFile = File(...),
     audio: UploadFile = File(...),
 ):
-    store = _load_store()
-    session = store.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Interview session not found.")
-    if str(session.get("user_id")) != str(user_id):
-        raise HTTPException(status_code=403, detail="Unauthorized session access.")
+        session = _get_session(session_id, user_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Interview session not found.")
+        if str(session.get("user_id")) != str(user_id):
+            raise HTTPException(status_code=403, detail="Unauthorized session access.")
 
     try:
         windows_raw = json.loads(answer_windows)
@@ -632,12 +655,11 @@ async def generate_report(
     session_id: str = Form(...),
     user_id: str = Form(...),
 ):
-    store = _load_store()
-    session = store.get(session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Interview session not found.")
-    if str(session.get("user_id")) != str(user_id):
-        raise HTTPException(status_code=403, detail="Unauthorized session access.")
+        session = _get_session(session_id, user_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Interview session not found.")
+        if str(session.get("user_id")) != str(user_id):
+            raise HTTPException(status_code=403, detail="Unauthorized session access.")
 
     if session.get("status") not in ("analyzed", "completed"):
         raise HTTPException(status_code=400, detail="Interview session must be analyzed before reporting.")
